@@ -1,4 +1,16 @@
-# `IClearSigningRegistry` walkthrough
+# ERC-8283 Clear Signing Registry
+
+Reference implementation of [ERC-8283](https://ethereum-magicians.org/t/erc-8283-on-chain-registry-for-erc-7730-clear-signing-descriptors/28717), an on-chain registry for [ERC-7730](https://eips.ethereum.org/EIPS/eip-7730) Clear Signing descriptors.
+
+This implementation is **not audited** and is intended for specification clarity only; production contracts will undergo an independent security review before deployment.
+
+```bash
+npm install
+npm run compile
+npm test
+```
+
+## `IClearSigningRegistry` walkthrough
 
 **Attester Signer Entity** (the attester)
 
