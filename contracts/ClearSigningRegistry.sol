@@ -34,13 +34,13 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     mapping(address attester => mapping(bytes32 attestationSetId => AttestationIdentifier[]))
         private _attestationSetContents;
 
-    // The timestamp at which 'attester' revoked the given ID — an attestation set ID or
-    // an individual attestation ID; both live in this one namespace — or 0 if never
-    // revoked. Written by a 'revokeAttestations' batch (submitted directly or relayed
-    // with a signature), or by this registry itself when a registration batch displaces
-    // an attestation set on the attester's behalf — in the relayed cases only after
-    // verifying that batch's own authorization chain.
-    mapping(address attester => mapping(bytes32 attestationId => uint64)) private _revokedAt;
+    // The timestamp at which 'attester' last revoked a function at a context, or 0 if never
+    // revoked. The registry does not relate this to any registered record: it is the attester's
+    // statement about a '(contextKeyId, functionKey)' tuple, evaluated by the consumer against the
+    // issue time of the attestation it holds. Written by a 'revokeFunctions' batch, submitted
+    // directly or relayed with a signature.
+    mapping(address attester => mapping(bytes32 contextKeyId => mapping(bytes32 functionKey => uint64)))
+        private _functionRevokedAt;
 
     // Global store of MirrorLists, written once per unique URI set.
     mapping(bytes32 mirrorListId => string[]) private _mirrorLists;
@@ -80,11 +80,9 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         // Authorize the batch before any attester-scoped state is touched.
         _authorizeRegistration(attester, descriptors, descriptorMirrorListId, attestationMirrorListId, signature);
 
-        // This call never revokes anything itself: a descriptor that displaces an
-        // active record requires that record's set id to already be revoked — via an
-        // earlier, separate 'revokeAttestations' call — or '_updateActiveAttestation'
-        // reverts with 'MissingRevocation'. Callers that want both steps atomically
-        // MUST batch them themselves (e.g. multicall or an EIP-5792 call bundle).
+        // Replacing an active record needs no prior revocation. Replacement is not
+        // revocation: attestations for changed functions stay valid until the attester
+        // revokes them via 'revokeFunctions'.
         _processAllDescriptors(attester, descriptors, descriptorMirrorListId, attestationMirrorListId);
     }
 
@@ -148,14 +146,6 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
                 continue;
             }
 
-            // A displaced active attestation set must already be recorded as revoked — by
-            // an earlier, separate 'revokeAttestations' call; this function never revokes
-            // anything itself. Checking at the moment each pointer is written also covers
-            // displacement by a duplicate (contextKeyId, descriptorSchemaMajor) key within the same batch.
-            if (previousAttestationSetId != bytes32(0) && _revokedAt[attester][previousAttestationSetId] == 0) {
-                revert MissingRevocation(previousAttestationSetId);
-            }
-
             _activeAttestationSetIds[attester][contextKeyId][descriptorSchemaMajor] = attestationSetId;
             emit AttestationUpdated(
                 attester, contextKeyId, attestationSetId, previousAttestationSetId,
@@ -191,10 +181,10 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @inheritdoc IClearSigningRegistry
-    function revokeAttestations(
-        address           attester,
-        RevocationEntry[] calldata revocations,
-        bytes             calldata signature
+    function revokeFunctions(
+        address              attester,
+        FunctionRevocation[] calldata revocations,
+        bytes                calldata signature
     ) external {
         if (revocations.length == 0) {
             revert EmptyRevocations();
@@ -202,9 +192,16 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         if (msg.sender != attester) {
             uint256 nonce = _nonces[attester];
             _nonces[attester] = nonce + 1;
-            _verifyRevocationSignature(attester, revocations, nonce, signature);
+            _verifyFunctionRevocationSignature(attester, revocations, nonce, signature);
         }
-        _processRevocations(attester, revocations);
+
+        uint64 timestamp = uint64(block.timestamp);
+        for (uint256 revocationIndex = 0; revocationIndex < revocations.length; revocationIndex++) {
+            FunctionRevocation calldata revocation = revocations[revocationIndex];
+            // Overwritten on repeat: a later revocation voids every attestation issued up to now.
+            _functionRevokedAt[attester][revocation.contextKeyId][revocation.functionKey] = timestamp;
+            emit FunctionRevoked(attester, revocation.contextKeyId, revocation.functionKey, timestamp);
+        }
     }
 
     /// @inheritdoc IClearSigningRegistry
@@ -239,48 +236,10 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @inheritdoc IClearSigningRegistry
-    function getRevocationTimestamp(address attester, bytes32 attestationId) external view returns (uint64) {
-        return _revokedAt[attester][attestationId];
-    }
-
-    /// @dev Records 'attestationId' as revoked under 'attester', emitting 'AttestationRevoked'.
-    ///      Revoking an already-revoked ID keeps the original timestamp: the recorded
-    ///      value is when the ID *first* became revoked, and must not move on a
-    ///      repeated revocation.
-    function _recordRevocation(address attester, bytes32 attestationId) private {
-        if (_revokedAt[attester][attestationId] != 0) {
-            return;
-        }
-        uint64 timestamp = uint64(block.timestamp);
-        _revokedAt[attester][attestationId] = timestamp;
-        emit AttestationRevoked(attester, attestationId, timestamp);
-    }
-
-    /// @dev Records 'attestationId' as revoked under 'attester' and clears 'contextKeyIds'
-    ///      immediately wherever they still point to it. A context ID whose active set
-    ///      has since moved to a different attestation set ID is silently skipped. Reached
-    ///      via '_processRevocations' from both 'createAttestations' and 'revokeAttestations'.
-    function _revokeAndClear(address attester, bytes32 attestationId, bytes32[] calldata contextKeyIds) private {
-        if (attestationId == bytes32(0)) {
-            revert ZeroAttestationId();
-        }
-        _recordRevocation(attester, attestationId);
-
-        // An attestation set's schema MAJOR is intrinsic: set metadata is write-once, so
-        // it is read from the stored details rather than passed in. An individual
-        // attestation ID or a never-registered ID reads a schema MAJOR of 0, which no
-        // active record can hold (registration forbids a zero descriptorSchemaMajor), so its
-        // clearing loop is a natural no-op while the revocation itself is still recorded.
-        uint256 descriptorSchemaMajor = _attestationSetDetails[attester][attestationId].descriptorSchemaMajor;
-
-        uint256 contextKeyIdCount = contextKeyIds.length;
-        for (uint256 contextKeyIndex = 0; contextKeyIndex < contextKeyIdCount; contextKeyIndex++) {
-            bytes32 contextKeyId = contextKeyIds[contextKeyIndex];
-            if (_activeAttestationSetIds[attester][contextKeyId][descriptorSchemaMajor] == attestationId) {
-                _activeAttestationSetIds[attester][contextKeyId][descriptorSchemaMajor] = bytes32(0);
-                emit AttestationUpdated(attester, contextKeyId, bytes32(0), attestationId, bytes32(0), descriptorSchemaMajor);
-            }
-        }
+    function getFunctionRevocationTimestamp(address attester, bytes32 contextKeyId, bytes32 functionKey)
+        external view returns (uint64)
+    {
+        return _functionRevokedAt[attester][contextKeyId][functionKey];
     }
 
     /// @inheritdoc IClearSigningRegistry
@@ -407,10 +366,9 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
                 continue;
             }
             attestations[outIndex++] = ResolvedAttestation({
-                attester:      attester,
-                attestationId: entry.attestationId,
-                attestationFormatId:      entry.attestationFormatId,
-                revokedAt:     _revokedAt[attester][entry.attestationId]
+                attester:            attester,
+                attestationId:       entry.attestationId,
+                attestationFormatId: entry.attestationFormatId
             });
         }
     }
@@ -542,7 +500,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         bytes32                 descriptorMirrorListId,
         bytes32                 attestationMirrorListId
     ) private {
-        _validateDescriptor(attester, descriptor);
+        _validateDescriptor(descriptor);
 
         bytes32 attestationSetId = _deriveAttestationSetId(descriptor);
 
@@ -554,7 +512,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @dev Validates one descriptor's fields and every entry of its attestation set.
-    function _validateDescriptor(address attester, DescriptorInfo calldata descriptor) private view {
+    function _validateDescriptor(DescriptorInfo calldata descriptor) private pure {
         if (descriptor.descriptorHash == bytes32(0)) {
             revert ZeroDescriptorHash();
         }
@@ -575,10 +533,6 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
             }
             if (entry.attestationFormatId == bytes32(0)) {
                 revert ZeroAttestationFormat();
-            }
-            // A revoked ID is consumed forever and cannot re-enter a set.
-            if (_revokedAt[attester][entry.attestationId] != 0) {
-                revert AttestationIdAlreadyUsed(entry.attestationId);
             }
             // One attestation per format per descriptor, so the index file's
             // format-to-attestation map stays unambiguous.
@@ -604,17 +558,12 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
 
     /// @dev Stores one attestation set's write-once metadata and contents, or verifies
     ///      them against the stored record when the set ID is already registered (a
-    ///      re-activation for more context IDs). A revoked set ID is consumed forever
-    ///      and can never be registered again.
+    ///      re-activation for more context IDs).
     function _storeAttestationSet(
         address                 attester,
         bytes32                 attestationSetId,
         DescriptorInfo calldata descriptor
     ) private {
-        if (_revokedAt[attester][attestationSetId] != 0) {
-            revert AttestationIdAlreadyUsed(attestationSetId);
-        }
-
         AttestationSetDetails storage details = _attestationSetDetails[attester][attestationSetId];
         if (details.descriptorHash != bytes32(0)) {
             // The singleton shortcut makes a set ID attester-chosen, so the ID alone does
@@ -671,7 +620,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     /// @dev Verifies the attester's EIP-712 signature over a registration batch.
     ///      Binding both MirrorList IDs prevents a relayer from substituting different
     ///      MirrorLists; the nonce makes the signature single-use. Revocation is a
-    ///      separate, independently-signed 'revokeAttestations' action, so no
+    ///      separate, independently-signed 'revokeFunctions' action, so no
     ///      revocation data is bound here.
     function _verifyRegistrationSignature(
         address                    attester,
@@ -694,16 +643,16 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @dev Verifies the attester's EIP-712 signature over a standalone revocation batch.
-    function _verifyRevocationSignature(
-        address                    attester,
-        RevocationEntry[] calldata revocations,
-        uint256                    nonce,
-        bytes             calldata signature
+    function _verifyFunctionRevocationSignature(
+        address                       attester,
+        FunctionRevocation[] calldata revocations,
+        uint256                       nonce,
+        bytes                calldata signature
     ) private view {
         bytes32 structHash = keccak256(
             abi.encode(
-                ClearSigningRegistryConstants.REVOCATION_BATCH_TYPEHASH,
-                RegistrationHashLib.hashRevocationEntries(revocations),
+                ClearSigningRegistryConstants.FUNCTION_REVOCATION_BATCH_TYPEHASH,
+                RegistrationHashLib.hashFunctionRevocations(revocations),
                 nonce
             )
         );
@@ -759,16 +708,4 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
             revert InvalidRegistrationSignature();
         }
     }
-
-    /// @dev Records each entry in 'revocations' as revoked under 'attester' and clears
-    ///      its listed context IDs. Safe to call with an empty array when no attestation
-    ///      sets are being displaced.
-    function _processRevocations(address attester, RevocationEntry[] calldata revocations) private {
-        uint256 revocationCount = revocations.length;
-        for (uint256 revocationIndex = 0; revocationIndex < revocationCount; revocationIndex++) {
-            RevocationEntry calldata entry = revocations[revocationIndex];
-            _revokeAndClear(attester, entry.attestationId, entry.contextKeyIds);
-        }
-    }
-
 }
