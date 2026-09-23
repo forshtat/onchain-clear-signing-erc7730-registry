@@ -190,7 +190,7 @@ const vaultAttestationSetId = vaultRegistered.attestationSetId; // === attestati
 const stakingSetId = stakingRegistered.attestationSetId; // content-derived (two members)
 ```
 
-## 3. `resolveDescriptors` and `getRevocationTimestamp` — the wallet fetches registry data before rendering
+## 3. `resolveDescriptors` — the wallet fetches registry data before rendering
 
 Every parameter here acts as a filter or a lookup key set.
 A real wallet passes its whole trust list, every candidate context, and every schema MAJOR version, and the attestation format it supports in one call:
@@ -225,7 +225,7 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
     "descriptorMirrorListUris": ["ipfs://bafybeigd.../vault-and-staking-descriptors-index.json", "ar://vault-and-staking-descriptors-index-mirror"],
     "attestationMirrorListUris": ["ipfs://bafybeigd.../release-attestations-index.json"],
     "attestations": [
-      { "attester": "0xAttester0000000000000000000000000000000", "attestationId": "0x4f0e...d6e7f", "attestationFormatId": "0x9b2c...eas0f", "revokedAt": "0" }
+      { "attester": "0xAttester0000000000000000000000000000000", "attestationId": "0x4f0e...d6e7f", "attestationFormatId": "0x9b2c...eas0f" }
     ]
   },
   {
@@ -236,20 +236,16 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
     "descriptorMirrorListUris": ["ipfs://bafybeigd.../vault-and-staking-descriptors-index.json", "ar://vault-and-staking-descriptors-index-mirror"],
     "attestationMirrorListUris": ["ipfs://bafybeigd.../release-attestations-index.json"],
     "attestations": [
-      { "attester": "0xAttester0000000000000000000000000000000", "attestationId": "0x4f0e...d6e7f", "attestationFormatId": "0x9b2c...eas0f", "revokedAt": "0" }
+      { "attester": "0xAttester0000000000000000000000000000000", "attestationId": "0x4f0e...d6e7f", "attestationFormatId": "0x9b2c...eas0f" }
     ]
   }
 ]
 ```
 
-The wallet validates every candidate entry, checking for availability, validity, and revocations (pseudocode):
+The wallet validates every candidate entry, checking for availability and validity (pseudocode). Revocation applies to individual functions and is checked per function — see §10:
 
 ```TypeScript
 for (const entry of resolved) {
-  // A stale active record can still point at an already-revoked set
-  const setRevokedAt = await registryRead.read.getRevocationTimestamp([attesterAccount.address, entry.attestationSetId]);
-  if (setRevokedAt !== 0n) continue;
-
   const descriptorBytes = await fetch(entry.descriptorMirrorListUris[0]).then((r) => r.arrayBuffer());
   if (!isValidDescriptor(descriptorBytes)) continue;
 
@@ -262,30 +258,32 @@ for (const entry of resolved) {
 throw new Error("Valid entry not found")
 ```
 
-## 4. `revokeAttestations` — batching a whole set with an individual member
+## 4. `revokeFunctions` — retracting functions
 
-`createAttestations` never revokes anything itself, so retiring the Vault's v1 attestation set — ahead of registering v2 in the next section — has to happen here, as its own call. The same call also batches in an unrelated cleanup: dropping just the Staking descriptor's vendor rendition. Two different `RevocationEntry` shapes side by side:
-* a set id withdraws the whole release
-* a single attestation id flags only that one rendition while the rest of the set stays active
+Revocation has a single shape: `(contextKeyId, functionKey)`. It states that whatever the attester attested for that function at that context before now is no longer correct. `functionKey` is the 4-byte selector left-aligned in a `bytes32`, or the EIP-712 type hash for typed data. Here the attester retracts the Vault's `transfer` function on both deployments:
 
 ```TypeScript
-await registryAs(attesterClient).write.revokeAttestations([
+const TRANSFER_KEY: Hex = "0xa9059cbb00000000000000000000000000000000000000000000000000000000";
+
+await registryAs(attesterClient).write.revokeFunctions([
   attesterAccount.address,
   [
-    { attestationId: vaultAttestationSetId, contextKeyIds: [deriveContextKeyId(mainnetChainId, vaultMainnetAddress), deriveContextKeyId(optimismChainId, vaultOptimismAddress)] },
-    { attestationId: stakingDeviceAttestationId, contextKeyIds: [] },
+    { contextKeyId: deriveContextKeyId(mainnetChainId, vaultMainnetAddress), functionKey: TRANSFER_KEY },
+    { contextKeyId: deriveContextKeyId(optimismChainId, vaultOptimismAddress), functionKey: TRANSFER_KEY },
   ],
   "0x", // signature
 ]);
 ```
 
-The `revokeAttestations` function can also be invoked with an EIP-712 signature similar to `createAttestations`.
+An attestation for the tuple is void when its signed issue time is at or before the recorded timestamp; an attestation issued after it is valid. Revoking a tuple again moves its timestamp forward. The registry does not check that the function was ever registered.
+
+The `revokeFunctions` function can also be invoked with an EIP-712 signature similar to `createAttestations`.
 
 ## 5. Using `createAttestations` for updates & relayed transactions
 
 In this example we are issuing an update to the previously registered `Vault` contract.
 This is a legitimate and common operation - the contract may be upgradeable and changed its behaviour.
-The old attestation set (`vaultAttestationSetId`) was already revoked in the previous section — `createAttestations` requires that precondition to already hold and never revokes anything itself.
+`createAttestations` replaces the active record without any prior revocation. Replacement is not revocation: an attester MUST separately revoke every function whose descriptor is replaced or removed — here, `transfer` was revoked in the previous section.
 We will also use a relayer address instead of making the registry call directly from the attester's EOA address.
 
 ```TypeScript
@@ -442,6 +440,21 @@ const resolvedFactory = await registryRead.read.resolveDescriptors([
 // shape identical to §3's output — one entry per contextKeyId, same fields
 ```
 
+## 10. Per-function descriptors — manifests and function revocation
+
+A descriptor file may cover a single function. The record the registry stores under a contract's `contextKeyId` then points at a *manifest*: a JSON file keyed by `functionKey` that lists, for each function, its descriptor hash, mirror URIs and attestation IDs. The manifest's hash is the `descriptorHash` registered in §2; it carries an ordinary attestation. Function attestations are not registered on-chain — a device verifies one function descriptor against one attestation and never sees the manifest.
+
+Registering a manifest costs the same however many functions it lists. Registering a newer manifest replaces the index only, exactly as in §5.
+
+A wallet checks revocation per function, using the `contextKeyId` it resolved through:
+
+```TypeScript
+const functionKey: Hex = `${calldata.slice(0, 10)}${"00".repeat(28)}`; // selector left-aligned in a bytes32
+const revokedAt = await registryRead.read.getFunctionRevocationTimestamp([attesterAccount.address, contextKeyId, functionKey]);
+// The attestation's signed issue time comes from the attestation itself (for EAS off-chain attestations, its `time`).
+if (revokedAt !== 0n && attestationIssuedAt <= revokedAt) throw new Error("attestation revoked");
+```
+
 ## Errors at a glance
 
 | Error | Raised when | See |
@@ -451,15 +464,14 @@ const resolvedFactory = await registryRead.read.resolveDescriptors([
 | `ZeroDescriptorSchemaMajor` | a descriptor's `descriptorSchemaMajor` is `0` | §2 |
 | `EmptyContextKeyIds` | a descriptor's `contextKeyIds` is empty | §2 |
 | `EmptyAttestationIds` | a descriptor's `attestationIds` is empty | §2 |
-| `ZeroAttestationId` | an `attestationIds`/`RevocationEntry` entry's `attestationId` is `bytes32(0)` | §2, §4 |
+| `ZeroAttestationId` | an `attestationIds` entry's `attestationId` is `bytes32(0)` | §2 |
 | `ZeroAttestationFormat` | an `attestationIds` entry's `attestationFormatId` is `bytes32(0)` | §2 |
 | `DuplicateAttestationFormat` | two entries in the same descriptor share an `attestationFormatId` | §2 |
-| `AttestationIdAlreadyUsed` | an attestation or set id was already revoked, or a reused set id doesn't match the stored record | §2 |
+| `AttestationIdAlreadyUsed` | a reused set id doesn't match the stored record | §2 |
 | `EmptyMirrorList` | `publishMirrorLists` is given an empty URI list | §1 |
 | `UnknownMirrorList` | a `descriptorMirrorListId`/`attestationMirrorListId` was never published via `publishMirrorLists` | §2 |
 | `UnknownDescriptor` | `updateDescriptorMirrorList` names a descriptor hash the attester never registered | §6 |
 | `UnknownAttestationSet` | `updateAttestationMirrorList` names a set id the attester never registered | §7 |
-| `EmptyRevocations` | `revokeAttestations` is called with an empty `revocations` array | §4 |
+| `EmptyRevocations` | `revokeFunctions` is called with an empty `revocations` array | §4 |
 | `EmptyKeys` | `updateDescriptorMirrorList`/`updateAttestationMirrorList` is given an empty key array | §6 |
-| `MissingRevocation` | a descriptor in `createAttestations` displaces an active record whose set id isn't recorded as revoked yet — see §4/§5 for the required revoke-then-register order | §5 |
 | `InvalidRegistrationSignature` | any relayed `signature` fails to verify for the named attester | §5 |
