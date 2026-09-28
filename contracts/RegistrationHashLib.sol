@@ -6,7 +6,7 @@ import "./ClearSigningRegistryConstants.sol";
 
 /// @title  RegistrationHashLib — EIP-712 struct-hash helpers for registration and revocation batches
 /// @notice Pure hashing only; no storage access. Attach via 'using RegistrationHashLib for
-///         DescriptorInfo[]' / 'RevocationEntry[]', or call the functions directly.
+///         DescriptorInfo[]' / 'FunctionRevocation[]', or call the functions directly.
 library RegistrationHashLib {
     /// @dev EIP-712 array-hash of 'descriptors': one descriptorInfo hash per entry
     ///      (covering the descriptor identity and its attestation set together),
