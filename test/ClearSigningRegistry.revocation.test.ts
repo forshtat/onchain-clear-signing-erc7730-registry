@@ -42,10 +42,10 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
       contextKeyIds,
       attestationIds: [{ attestationId: hashOf(`att-${label}`), attestationFormatId: hashOf("erc7730.attestation.eas.offchain") }],
     };
-    await registry.write.createAttestations([
+    const hash = await registry.write.createAttestations([
       attesterAddress, [descriptor], descriptorMirrorListId, attestationMirrorListId, "0x",
     ]);
-    return { descriptor, descriptorMirrorListId, attestationMirrorListId };
+    return { descriptor, descriptorMirrorListId, attestationMirrorListId, hash };
   }
 
   it("records a revocation per (context, descriptorHash) and leaves every other pair untouched", async function () {
@@ -205,6 +205,115 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
 
     const [resolved] = await registry.read.resolveDescriptors([[who], [contextA], [1n], [], []]);
     assert.equal(resolved.descriptorHash, v2.descriptor.descriptorHash);
+  });
+
+  it("auto-revokes the displaced descriptorHash atomically, with no separate call", async function () {
+    const { attester, registry } = await deploy();
+    const who = attester.account.address;
+
+    const v1 = await registerManifest(registry, who, "v1", [contextA]);
+    assert.equal(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]), 0n);
+
+    const v2 = await registerManifest(registry, who, "v2", [contextA]);
+    await publicClient.waitForTransactionReceipt({ hash: v2.hash });
+
+    assert.notEqual(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]), 0n);
+    const events = await registry.getEvents.DescriptorRevoked();
+    assert.equal(events.length, 1);
+    assert.equal(events[0].args.contextKeyId, contextA);
+    assert.equal(events[0].args.descriptorHash, v1.descriptor.descriptorHash);
+  });
+
+  it("does not touch other contexts sharing the attester when displacing one", async function () {
+    const { attester, registry } = await deploy();
+    const who = attester.account.address;
+
+    await registerManifest(registry, who, "shared-v1", [contextA, contextB]);
+    await registerManifest(registry, who, "shared-v2", [contextA]); // only displaces contextA
+
+    const v1Hash = hashOf("manifest-shared-v1");
+    assert.notEqual(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1Hash]), 0n);
+    assert.equal(await registry.read.getDescriptorRevocationTimestamp([who, contextB, v1Hash]), 0n);
+
+    const [resolvedB] = await registry.read.resolveDescriptors([[who], [contextB], [1n], [], []]);
+    assert.equal(resolvedB.descriptorHash, v1Hash); // untouched: still active at contextB
+  });
+
+  it("reverts RevokedDescriptorReused when registering an already-revoked descriptorHash at that context", async function () {
+    const { attester, registry } = await deploy();
+    const who = attester.account.address;
+
+    await registerManifest(registry, who, "v1", [contextA]);
+    await registerManifest(registry, who, "v2", [contextA]); // auto-revokes v1's hash at contextA
+
+    // Trying to bring v1's exact content back, at the same context, must fail.
+    const descriptorUris = ["ipfs://descriptor-v1-revival"];
+    const attestationUris = ["ipfs://attestation-v1-revival"];
+    await registry.write.publishMirrorLists([[descriptorUris, attestationUris]]);
+    const descriptorMirrorListId = keccak256(encodeAbiParameters([{ type: "string[]" }], [descriptorUris]));
+    const attestationMirrorListId = keccak256(encodeAbiParameters([{ type: "string[]" }], [attestationUris]));
+
+    await assert.rejects(
+      registry.write.createAttestations([
+        who,
+        [{
+          descriptorHash: hashOf("manifest-v1"),
+          descriptorSchemaMajor: 1n,
+          contextKeyIds: [contextA],
+          attestationIds: [{ attestationId: hashOf("att-v1-revival"), attestationFormatId: hashOf("erc7730.attestation.eas.offchain") }],
+        }],
+        descriptorMirrorListId, attestationMirrorListId, "0x",
+      ]),
+      /RevokedDescriptorReused/,
+    );
+  });
+
+  it("blocks a revoked descriptorHash even on first-time activation of a fresh context", async function () {
+    const { attester, registry } = await deploy();
+    const who = attester.account.address;
+
+    // Pre-emptively revoke content that was never registered anywhere.
+    const neverRegisteredHash = hashOf("never-registered");
+    await registry.write.revokeDescriptors([who, [{ contextKeyId: contextA, descriptorHash: neverRegisteredHash }], "0x"]);
+
+    const descriptorUris = ["ipfs://descriptor-fresh"];
+    const attestationUris = ["ipfs://attestation-fresh"];
+    await registry.write.publishMirrorLists([[descriptorUris, attestationUris]]);
+    const descriptorMirrorListId = keccak256(encodeAbiParameters([{ type: "string[]" }], [descriptorUris]));
+    const attestationMirrorListId = keccak256(encodeAbiParameters([{ type: "string[]" }], [attestationUris]));
+
+    await assert.rejects(
+      registry.write.createAttestations([
+        who,
+        [{
+          descriptorHash: neverRegisteredHash,
+          descriptorSchemaMajor: 1n,
+          contextKeyIds: [contextA], // contextA has never had any active record
+          attestationIds: [{ attestationId: hashOf("att-fresh"), attestationFormatId: hashOf("erc7730.attestation.eas.offchain") }],
+        }],
+        descriptorMirrorListId, attestationMirrorListId, "0x",
+      ]),
+      /RevokedDescriptorReused/,
+    );
+  });
+
+  it("does not move the timestamp of an already-explicitly-revoked hash when it is later displaced", async function () {
+    const { attester, registry } = await deploy();
+    const who = attester.account.address;
+
+    const v1 = await registerManifest(registry, who, "v1", [contextA]);
+    await registry.write.revokeDescriptors([who, [{ contextKeyId: contextA, descriptorHash: v1.descriptor.descriptorHash }], "0x"]);
+    const explicitTimestamp = await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]);
+
+    await networkHelpers.time.increase(100);
+    // v1 is still (surprisingly, but validly) the active record — explicit revocation does
+    // not clear the active pointer — so this still counts as a displacement.
+    await registerManifest(registry, who, "v2", [contextA]);
+
+    assert.equal(
+      await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]),
+      explicitTimestamp,
+    );
   });
 
   it("does not expose the removed attestation-ID revocation interface", async function () {

@@ -81,9 +81,12 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         // Authorize the batch before any attester-scoped state is touched.
         _authorizeRegistration(attester, descriptors, descriptorMirrorListId, attestationMirrorListId, signature);
 
-        // Replacing an active record needs no prior revocation. Replacement is not
-        // revocation: a superseded descriptor's content stays valid until the attester
-        // revokes its exact 'descriptorHash' via 'revokeDescriptors'.
+        // Replacing an active record needs no prior revocation — displacing it auto-revokes
+        // the descriptor hash it displaces, atomically, in '_updateActiveAttestation'. This
+        // only covers what the registry actually sees: the registered descriptorHash itself.
+        // Content nested inside it and invisible on-chain — e.g. one function's descriptor
+        // inside a manifest — is not auto-revoked when only that nested content changes, and
+        // still needs an explicit 'revokeDescriptors' call for its own hash.
         _processAllDescriptors(attester, descriptors, descriptorMirrorListId, attestationMirrorListId);
     }
 
@@ -130,15 +133,24 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
 
     /// @dev Updates the active record for each (contextKeyId, descriptorSchemaMajor) key of a
     ///      descriptor. Records of other schema MAJORs are untouched.
+    ///
+    ///      Displacing a context's active record auto-revokes the descriptor hash it displaces,
+    ///      at that context — atomically, in this same call, with no separate 'revokeDescriptors'
+    ///      step required and no way for the attester to forget it. A descriptor hash that was
+    ///      ever revoked at a context — whether by this auto-revoke or by an explicit call — can
+    ///      never become active at that context again, reverting with 'RevokedDescriptorReused'.
     function _updateActiveAttestation(
         address                 attester,
         DescriptorInfo calldata descriptor,
         bytes32                 attestationSetId
     ) private {
-        bytes32[] calldata contextKeyIds  = descriptor.contextKeyIds;
-        uint256   descriptorSchemaMajor          = descriptor.descriptorSchemaMajor;
+        bytes32[] calldata contextKeyIds        = descriptor.contextKeyIds;
+        uint256   descriptorSchemaMajor         = descriptor.descriptorSchemaMajor;
+        bytes32   descriptorHash                = descriptor.descriptorHash;
+        uint64    timestamp                     = uint64(block.timestamp);
+
         for (uint256 contextKeyIndex = 0; contextKeyIndex < contextKeyIds.length; contextKeyIndex++) {
-            bytes32 contextKeyId                = contextKeyIds[contextKeyIndex];
+            bytes32 contextKeyId             = contextKeyIds[contextKeyIndex];
             bytes32 previousAttestationSetId = _activeAttestationSetIds[attester][contextKeyId][descriptorSchemaMajor];
 
             // A record already pointing at this set — a re-activation batch listing existing
@@ -147,10 +159,23 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
                 continue;
             }
 
+            if (previousAttestationSetId != bytes32(0)) {
+                bytes32 previousDescriptorHash =
+                    _attestationSetDetails[attester][previousAttestationSetId].descriptorHash;
+                if (_descriptorRevokedAt[attester][contextKeyId][previousDescriptorHash] == 0) {
+                    _descriptorRevokedAt[attester][contextKeyId][previousDescriptorHash] = timestamp;
+                    emit DescriptorRevoked(attester, contextKeyId, previousDescriptorHash, timestamp);
+                }
+            }
+
+            if (_descriptorRevokedAt[attester][contextKeyId][descriptorHash] != 0) {
+                revert RevokedDescriptorReused(contextKeyId, descriptorHash);
+            }
+
             _activeAttestationSetIds[attester][contextKeyId][descriptorSchemaMajor] = attestationSetId;
             emit AttestationUpdated(
                 attester, contextKeyId, attestationSetId, previousAttestationSetId,
-                descriptor.descriptorHash, descriptorSchemaMajor
+                descriptorHash, descriptorSchemaMajor
             );
         }
     }

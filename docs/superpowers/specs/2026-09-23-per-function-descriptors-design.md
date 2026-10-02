@@ -1,6 +1,6 @@
 # Per-function descriptors in the ERC-8283 registry — design
 
-Status: implemented in this repo (`per-function-descriptors` branch); ERC-8283 updated in the `forshtat/ERCs` fork; ERC-8176 and ERC-7730 not yet touched. Date: 2026-09-23, revised 2026-10-02.
+Status: implemented in this repo (`per-function-descriptors` branch); ERC-8283 updated in the `forshtat/ERCs` fork; ERC-8176 and ERC-7730 not yet touched. Date: 2026-09-23, revised 2026-10-02 (twice — see decision 9).
 
 ## Goal
 
@@ -17,9 +17,10 @@ These were settled while scoping the work, in order, including two reversals mad
 3. **Registration is unchanged.** `createAttestations`, `contextKeyId` and `descriptorHash` keep their meaning; the registry treats them as opaque `bytes32`.
 4. **Each function descriptor is self-contained and signed.** It carries its own chain, address and selector (EIP-712: verifying contract and primary type). All `includes` are flattened into it and attested with it. The maximum flattened size will be formalized separately.
 5. **Revocation is one flow, one shape, keyed by content, not by slot.** `(contextKeyId, descriptorHash)`: the attester states that this exact descriptor content is no longer correct at this context. It works identically for a whole-contract descriptor, a manifest, or a single-function descriptor — the registry only ever sees an opaque content hash, never a selector or an attestation ID.
-6. **Revoke-before-replace is normative, not enforced.** The registry cannot see which functions a manifest contains, so it cannot check per-function replacement. ERC-8283 states the obligation as a MUST on attesters instead: revoke the old `descriptorHash` of anything a new manifest replaces or removes.
+6. **Revoke-before-replace is normative for nested content the registry cannot see** (individual functions inside a manifest), **but enforced and automatic for the registered `descriptorHash` itself** (see decision 9). ERC-8283 states the nested-content obligation as a MUST on attesters; the registry obligation needs no MUST, because it is not optional.
 7. **The `(contextKeyId, descriptorHash)` revocation is the only revocation mechanism in ERC-8283.** The `erc8283-index-revocation-killswitch` side branch (kill switch, revocation oracle) is not the basis of this work; it was superseded by `create-erc7730-onchain-registry`, which has neither.
 8. **Manifest lookup keys are split by dispatch kind, not unified.** A manifest has two maps: `methods` (keyed by raw `bytes4` function selector) and `messages` (keyed by the EIP-712 `typeHash` of the primary type). A wallet always knows which kind of request it's resolving before it looks anything up, so a unified `bytes32` key never bought real simplification — it only relied on selectors and type hashes never colliding (true in practice, but not true by construction).
+9. **Displacing an active record auto-revokes what it displaces, atomically, inside `createAttestations` itself.** No separate `revokeDescriptors` call, no window where the attester could forget it, and a revoked `descriptorHash` can never become active again at that context (`RevokedDescriptorReused`). This restores the old design's enforced revoke-before-replace guarantee — generalized to `descriptorHash`, scoped per context instead of globally — without reintroducing its two-call dance. See "Auto-revocation on displacement" below.
 
 ### History: why decision 5 isn't the first thing shipped
 
@@ -94,12 +95,22 @@ Consequences:
 - Retiring a whole release: revoke the manifest's own `descriptorHash` at each affected context — the same call, no separate mechanism, and a wallet's §3-level check (below) skips the whole record without even fetching the manifest.
 - Authorization matches every other attester write: a direct call needs no signature; a relayed call carries an EIP-712 signature (ECDSA or ERC-1271) and consumes the shared nonce. Typehashes: `DescriptorRevocation(bytes32 contextKeyId,bytes32 descriptorHash)` and `ClearSigningDescriptorRevocationBatch(DescriptorRevocation[] revocations,uint256 nonce)`.
 
+### Auto-revocation on displacement
+
+`createAttestations` displacing a context's active record (registering a different `descriptorHash` than what is currently active there) auto-revokes the displaced `descriptorHash`, at that context, inside the same transaction:
+
+- No separate `revokeDescriptors` call, no signed data beyond what `createAttestations` already commits to, no window where the attester could forget it.
+- A `descriptorHash` that is revoked at a context — whether auto-revoked or explicitly — can never become active at that context again. Attempting to reverts `RevokedDescriptorReused(contextKeyId, descriptorHash)`. Closes the old "revoked IDs consumed forever" gap this redesign had also dropped.
+- Re-displacing a `descriptorHash` that was already revoked (e.g. explicitly, before a later registration also displaces it) does not move its timestamp again — the write is skipped once already non-zero.
+- Measured cost: **~9,300 gas per displaced context key**, on top of the existing per-context write `createAttestations` already does. Scales with contexts touched in the call, same as everything else in this design — never with how many functions a manifest lists.
+- This covers only the registered `descriptorHash` itself. A manifest swap auto-revokes the *old manifest's* hash; it does nothing for an individual function's hash that changed *inside* the new manifest, since the registry never sees it. That still needs an explicit `revokeDescriptors` call — the MUST in decision 6 is exactly, and only, this remaining case.
+
 **Removed from the registry** (the original, pre-this-feature `_revokedAt`/`revokeAttestations`, and the first per-function attempt alike):
 
 - `revokeAttestations`, `RevocationEntry`, the old `AttestationRevoked` event and the single-argument `getRevocationTimestamp`.
-- The `MissingRevocation` error and the revoke-before-replace rule: `createAttestations` simply overwrites the active pointer.
-- Pointer clearing on revocation.
-- The "a revoked ID is consumed forever" rule for attestation-set IDs. `AttestationIdAlreadyUsed` remains only for a reused set ID whose stored record does not match.
+- The old `MissingRevocation` error (attester-enforced, required a prior separate call) — superseded by automatic, atomic auto-revocation plus `RevokedDescriptorReused` (decision 9), not reinstated as-is.
+- Pointer clearing on revocation (the old `RevocationEntry.contextKeyIds` cleanup list) — unneeded: the active pointer is simply overwritten, same as before.
+- The "a revoked ID is consumed forever" rule for attestation-set IDs, specifically — restored, generalized to `descriptorHash` and scoped per context, via auto-revocation above. `AttestationIdAlreadyUsed` remains, separately, only for a reused set ID whose stored record does not match.
 - `ResolvedAttestation.revokedAt`.
 - The old `REVOCATION_ENTRY_TYPEHASH` / `REVOCATION_BATCH_TYPEHASH` and `hashRevocationEntries`.
 - (From the first per-function attempt) the signed-issue-time validity rule, and any ERC-8176 requirement that attestation formats carry one for this purpose.
@@ -128,7 +139,7 @@ Measured on the current contract, 2 deployments, one EAS attestation per descrip
 | Per-function context keys (rejected) | 255k | 1.16M | 4.54M | 13.6M |
 | Manifest (this design) | ≈255k regardless of function count | | | |
 
-The manifest figure follows from the on-chain data being independent of function count; it was not measured separately. A `revokeDescriptors` entry is one storage write plus an event, consistent with the `createAttestations` per-context-key cost already measured.
+The manifest figure follows from the on-chain data being independent of function count; it was not measured separately. A `revokeDescriptors` entry is one storage write plus an event, consistent with the `createAttestations` per-context-key cost already measured. Auto-revocation on displacement (decision 9) adds a measured ~9,300 gas per displaced context on top of a normal registration — cheaper than a separate `revokeDescriptors` transaction would have cost, since it avoids that transaction's base cost and (if relayed) its own signature verification.
 
 ## Alternatives considered
 
@@ -138,13 +149,14 @@ The manifest figure follows from the on-chain data being independent of function
 - **Revocation by attestation ID** (with or without a context scope): doesn't mirror what an attestation actually claims, forces the attester to track every ID ever issued, and loses the "correction auto-resolves" property that content-hash keying gets for free. Rejected.
 - **Derived-ID convention** on the pre-existing attestation-ID-keyed revocation mapping: works without contract changes but keeps two revocation flows and emits opaque hashes. Rejected.
 - **Unified manifest lookup key** (one `bytes32` holding either a padded selector or a type hash): relies on the two never colliding rather than being correct by construction, and doesn't match ERC-7730's own separation of `context.contract` and `context.eip712`. Rejected in favor of two explicit maps (decision 8).
+- **Enforced-but-manual revoke-before-replace** (re-add the old `MissingRevocation`, re-keyed to `descriptorHash`, requiring the attester to call `revokeDescriptors` before a displacing `createAttestations`): restores the same end guarantee as decision 9, but needs a separate transaction every time, costs more overall (extra tx base cost, extra signature verification if relayed), and the attester can still fail to batch the two calls atomically. Rejected in favor of automatic auto-revocation, which gets the identical guarantee for less gas with no way to get it wrong.
 
 ## Changes by component
 
 - **ERC-7730:** permit single-function descriptors; define flattening (all `includes` inlined and attested) and the required embedded context. Not yet done.
 - **ERC-8176:** attestation over a function descriptor including its context; integrity attestation over a manifest. **Not touched in this pass** — the signed-issue-time requirement from the first attempt is no longer needed and should not be added.
-- **ERC-8283** (worktree `~/ERCS2/.worktrees/erc-8283`, branch `per-function-descriptors-8283`, from `create-erc7730-onchain-registry`; pushed to `forshtat/ERCs`, PR #7): manifests, the two-map lookup split, `revokeDescriptors`/`getDescriptorRevocationTimestamp`/`DescriptorRevocation`/`DescriptorRevoked` throughout, the MUST obligation, and the dropped issue-time language. The normative interface asset is synced with this repo.
-- **This repo** (branch `per-function-descriptors`, PR #1): the contract, interface, constants and hash-lib renames (`FunctionRevocation`→`DescriptorRevocation`, `revokeFunctions`→`revokeDescriptors`, `getFunctionRevocationTimestamp`→`getDescriptorRevocationTimestamp`, `FunctionRevoked`→`DescriptorRevoked`, `_functionRevokedAt`→`_descriptorRevokedAt`); the revocation test file; `README.md` §3 (top-level check restored), §4, §5, §10 (manifest two-map example), and the errors table.
+- **ERC-8283** (worktree `~/ERCS2/.worktrees/erc-8283`, branch `per-function-descriptors-8283`, from `create-erc7730-onchain-registry`; pushed to `forshtat/ERCs`, PR #7): manifests, the two-map lookup split, `revokeDescriptors`/`getDescriptorRevocationTimestamp`/`DescriptorRevocation`/`DescriptorRevoked` throughout, the MUST obligation, the dropped issue-time language, and (pending) auto-revocation on displacement plus `RevokedDescriptorReused`. The normative interface asset is synced with this repo.
+- **This repo** (branch `per-function-descriptors`, PR #1): the contract, interface, constants and hash-lib renames (`FunctionRevocation`→`DescriptorRevocation`, `revokeFunctions`→`revokeDescriptors`, `getFunctionRevocationTimestamp`→`getDescriptorRevocationTimestamp`, `FunctionRevoked`→`DescriptorRevoked`, `_functionRevokedAt`→`_descriptorRevokedAt`); auto-revocation on displacement and the new `RevokedDescriptorReused` error in `_updateActiveAttestation`; the revocation test file (including auto-revoke, cross-context isolation, revived-hash rejection, and the already-explicitly-revoked no-op-timestamp cases); `README.md` §3 (top-level check restored), §4 (reframed as the standalone/nested-function case), §5 (no-prior-revocation-needed demonstrated), §10 (manifest two-map example, strengthened top-level guarantee), and the errors table.
 - **Tooling (out of scope here):** splitter/flattener and manifest builder.
 
 ## Open questions
@@ -153,12 +165,13 @@ The manifest figure follows from the on-chain data being independent of function
 2. **Factory-bound contexts:** a revocation under the factory-kind `contextKeyId` covers every instance. Revoking one instance means the wallet must also check the contract-kind key for that address. Decide whether to define that check or accept factory-wide granularity.
 3. **Batch revocation read:** the wallet issues one `getDescriptorRevocationTimestamp` per check (two per function, including the top-level one); a multicall helper is optional.
 4. **Maximum flattened descriptor size:** deferred to a separate effort.
-5. **Per-rendition revocation** (kill one attestation format within a set, keep a sibling active): no on-chain primitive exists post-redesign; the manifest-editing remedy has a staleness caveat for already-fetched copies. Accepted as a known limitation (see "History").
+5. **Per-rendition revocation** (kill one attestation format within a set, keep a sibling active): no on-chain primitive exists post-redesign; the manifest-editing remedy has a staleness caveat for already-fetched copies. Accepted as a known limitation (see "History"). Unaffected by decision 9 — auto-revocation operates on `descriptorHash`, same granularity limit as explicit revocation.
+6. **~~Enforced revoke-before-replace~~ — resolved by decision 9.**
 
 ## Plan
 
 1. **Spec text** (outside this repo, deferred): ERC-7730 flattening and single-function context; ERC-8176 function and manifest attestations.
-2. **Registry repo** (test-first) — done: `revokeDescriptors`, `DescriptorRevoked`, `getDescriptorRevocationTimestamp`, the renamed typehashes and `hashDescriptorRevocations`; removal of the old revocation machinery including `MissingRevocation`; tests for per-pair isolation, the generalized whole-descriptor case, the audit-only timestamp bump, batching, relayed signing with nonce and replay rejection, and `createAttestations` replacing a pointer without prior revocation; `README.md` and the errors table updated.
+2. **Registry repo** (test-first) — done: `revokeDescriptors`, `DescriptorRevoked`, `getDescriptorRevocationTimestamp`, the renamed typehashes and `hashDescriptorRevocations`; removal of the old revocation machinery including the old `MissingRevocation`; auto-revocation on displacement and `RevokedDescriptorReused` (decision 9); tests for per-pair isolation, the generalized whole-descriptor case, the audit-only timestamp bump, batching, relayed signing with nonce and replay rejection, auto-revoke on displacement, cross-context isolation, revived-hash rejection, and the already-revoked no-op case; `README.md` and the errors table updated.
 3. **ERC-8283** — done (PR #7), pending review.
 4. **Tooling** to split, flatten and build manifests, in a separate repo or task.
 

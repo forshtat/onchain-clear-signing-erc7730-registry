@@ -269,10 +269,12 @@ throw new Error("Valid entry not found")
 
 Revocation has a single shape: `(contextKeyId, descriptorHash)`. It states that this exact descriptor content is no longer correct at this context. `descriptorHash` is the same [ERC-8176](https://eips.ethereum.org/EIPS/eip-8176) content hash used everywhere else in this registry — the hash of a whole-contract descriptor, of a manifest (§10), or of one function descriptor within a manifest. The registry never distinguishes which kind it is.
 
-Say the `transfer` function descriptor the attester previously registered (inside the Vault's manifest, §10) turns out to be wrong. The attester retracts that exact descriptor's content on both deployments:
+`createAttestations` (§5) already auto-revokes whatever it displaces, so this call is for a narrower case: a *standalone* revocation with no replacement registered in the same step — an emergency stop, or killing one bad function descriptor's hash *inside an otherwise-unchanged manifest* (§10), which the registry never sees and so can never auto-revoke on its own.
+
+Say the `transfer` function descriptor inside the Vault's manifest (§10) turns out to be wrong, and the attester isn't ready to publish a corrected manifest yet. They retract that exact descriptor's content on both deployments, immediately:
 
 ```TypeScript
-const badTransferDescriptorHash: Hex = "0x7c3a1e2b...5d6e7f"; // the wrong descriptor's own hash
+const badTransferDescriptorHash: Hex = "0x1a2b3c4d...f0e1d2c3"; // the wrong function descriptor's own hash
 
 await registryAs(attesterClient).write.revokeDescriptors([
   attesterAccount.address,
@@ -284,9 +286,7 @@ await registryAs(attesterClient).write.revokeDescriptors([
 ]);
 ```
 
-`badTransferDescriptorHash` is void at these contexts forever — there is no un-revoke. A correction is never affected by this call: a different `transfer` description hashes to a different value, so a corrected descriptor is valid from the moment it is attested and published, with nothing to coordinate against the revocation. The registry does not check that the content was ever attested or registered.
-
-The same call retires a whole release in one shot — pass the manifest's own `descriptorHash` (from §10) instead of one function's, and every function inside that manifest becomes unreachable at that context without a separate call per function.
+`badTransferDescriptorHash` is void at these contexts forever — there is no un-revoke, and `createAttestations` will reject any future attempt to reactivate it (`RevokedDescriptorReused`). A correction is never affected by this call: a different `transfer` description hashes to a different value, so a corrected descriptor is valid from the moment it is attested and published, with nothing to coordinate against the revocation. The registry does not check that the content was ever attested or registered.
 
 The `revokeDescriptors` function can also be invoked with an EIP-712 signature similar to `createAttestations`.
 
@@ -294,7 +294,7 @@ The `revokeDescriptors` function can also be invoked with an EIP-712 signature s
 
 In this example we are issuing an update to the previously registered `Vault` contract.
 This is a legitimate and common operation - the contract may be upgradeable and changed its behaviour.
-`createAttestations` replaces the active record without any prior revocation. Replacement is not revocation: an attester MUST separately revoke the exact `descriptorHash` of every descriptor that is replaced or removed — here, the old `transfer` descriptor's hash was revoked in the previous section.
+`createAttestations` needs no prior revocation to replace an active record: displacing the old `vaultDescriptor` from §2 auto-revokes its exact `descriptorHash`, at both contexts, atomically with this very call — no separate step, nothing the attester could forget. This covers only the registered `descriptorHash` itself, though: if instead only one function *inside* an otherwise-unchanged manifest had changed (§10), that function's own hash is invisible to the registry and still needs an explicit `revokeDescriptors` call, as in §4.
 We will also use a relayer address instead of making the registry call directly from the attester's EOA address.
 
 ```TypeScript
@@ -340,6 +340,13 @@ const signature = await attesterClient.signTypedData({
 await registryAs(relayerClient).write.createAttestations([
   attesterAccount.address, [newDescriptor], descriptorMirrorListId, newAttestationMirrorListId, signature,
 ]);
+
+// The old vaultDescriptor.descriptorHash from §2 is now, provably, revoked at both contexts —
+// a side effect of the call above, not a separate action:
+const oldHashRevokedAt = await registryRead.read.getDescriptorRevocationTimestamp(
+  [attesterAccount.address, mainnetContextKeyId, descriptorHash], // descriptorHash === §2's vaultDescriptor.descriptorHash
+);
+// oldHashRevokedAt !== 0n
 ```
 
 ## 6. `updateDescriptorMirrorList` — rotating descriptor storage for several descriptors at once
@@ -471,9 +478,9 @@ A manifest keys contract calls and typed messages separately, since they're reso
 
 `methods` is keyed by the raw 4-byte function selector; `messages` by the [EIP-712](https://eips.ethereum.org/EIPS/eip-712) `typeHash` of the message's primary type — no padding or unification between the two.
 
-Registering a manifest costs the same however many functions it lists. Registering a newer manifest replaces the index only, exactly as in §5.
+Registering a manifest costs the same however many functions it lists. Registering a newer manifest replaces the index only, exactly as in §5 — and, per §5, that replacement auto-revokes the *old* manifest's own hash automatically. A function whose descriptor changed *within* the new manifest is a different matter: the registry never sees individual functions, so that function's own old hash is not auto-revoked and needs an explicit `revokeDescriptors` call (§4) if it must be provably dead rather than merely superseded.
 
-A wallet checks revocation twice: once at the top level against the manifest's own hash (§3 — skips fetching the manifest entirely if revoked), and again for the specific function descriptor it resolves, reusing the hash it already computed while verifying the attestation per ERC-8176:
+A wallet checks revocation twice: once at the top level against the manifest's own hash (§3 — skips fetching the manifest entirely if revoked; guaranteed non-zero for any manifest that was ever displaced, not merely advisory), and again for the specific function descriptor it resolves, reusing the hash it already computed while verifying the attestation per ERC-8176:
 
 ```TypeScript
 const descriptorHash = computeDescriptorHash(functionDescriptor); // already required by ERC-8176 attestation verification
@@ -494,6 +501,7 @@ if (revokedAt !== 0n) throw new Error("descriptor revoked");
 | `ZeroAttestationFormat` | an `attestationIds` entry's `attestationFormatId` is `bytes32(0)` | §2 |
 | `DuplicateAttestationFormat` | two entries in the same descriptor share an `attestationFormatId` | §2 |
 | `AttestationIdAlreadyUsed` | a reused set id doesn't match the stored record | §2 |
+| `RevokedDescriptorReused` | `createAttestations` would activate a `descriptorHash` already revoked at that context — explicitly, or auto-revoked by an earlier displacement | §5 |
 | `EmptyMirrorList` | `publishMirrorLists` is given an empty URI list | §1 |
 | `UnknownMirrorList` | a `descriptorMirrorListId`/`attestationMirrorListId` was never published via `publishMirrorLists` | §2 |
 | `UnknownDescriptor` | `updateDescriptorMirrorList` names a descriptor hash the attester never registered | §6 |
