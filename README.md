@@ -466,7 +466,7 @@ A function index keys contract calls and typed messages separately, since they'r
 
 ```json
 {
-  "version": 1,
+  "version": "2.0.0",
   "methods": {
     "0xa9059cbb": { "descriptorHash": "0x...", "descriptorUris": ["ipfs://.../transfer.json"], "attestations": [{ "attestationId": "0x...", "attestationFormatId": "0x9b2c...eas0f", "uris": ["ipfs://.../transfer.attestation.json"] }] }
   },
@@ -476,7 +476,7 @@ A function index keys contract calls and typed messages separately, since they'r
 }
 ```
 
-`methods` is keyed by the raw 4-byte function selector; `messages` by the [EIP-712](https://eips.ethereum.org/EIPS/eip-712) `typeHash` of the message's primary type — no padding or unification between the two.
+`methods` is keyed by the raw 4-byte function selector; `messages` by the [EIP-712](https://eips.ethereum.org/EIPS/eip-712) `typeHash` of the message's primary type — no padding or unification between the two. `version` is locked to the ERC-7730 descriptor schema version this function index is paired with, same policy as the pre-existing descriptor/attestation index files — see ERC-8283's normative `erc8283-function-index-vN.schema.json`.
 
 Registering a function index costs the same however many functions it lists. Registering a newer one simply supersedes it, exactly as in §5 — and, per §5, that replacement auto-revokes the *old* function index's own hash automatically. A function whose descriptor changed *within* the new function index is a different matter: the registry never sees individual functions, so that function's own old hash is not auto-revoked and needs an explicit `revokeDescriptors` call (§4) if it must be provably dead rather than merely superseded.
 
