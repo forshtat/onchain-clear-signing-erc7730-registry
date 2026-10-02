@@ -242,14 +242,21 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
 ]
 ```
 
-The wallet validates every candidate entry, checking for availability and validity (pseudocode). Revocation applies to individual functions and is checked per function — see §10:
+The wallet validates every candidate entry, checking for availability and validity (pseudocode). `getDescriptorRevocationTimestamp` is checked first, directly against the entry's own `descriptorHash` and `contextKeyId` — no fetch needed to rule out a revoked release. A per-function descriptor's own revocation is checked separately, inside manifest resolution — see §10:
 
 ```TypeScript
 for (const entry of resolved) {
+  const easAttestationEntry = entry.attestations.find((a) => a.attestationFormatId === ATTESTATION_FORMAT_EAS_OFFCHAIN);
+  if (!easAttestationEntry) continue;
+
+  const revokedAt = await registryRead.read.getDescriptorRevocationTimestamp(
+    [easAttestationEntry.attester, entry.contextKeyId, entry.descriptorHash],
+  );
+  if (revokedAt !== 0n) continue; // this exact release is revoked at this context — skip without fetching anything
+
   const descriptorBytes = await fetch(entry.descriptorMirrorListUris[0]).then((r) => r.arrayBuffer());
   if (!isValidDescriptor(descriptorBytes)) continue;
 
-  const easAttestationEntry = entry.attestations.find((a) => a.attestationFormatId === ATTESTATION_FORMAT_EAS_OFFCHAIN);
   if (!isValidEasAttesation(easAttestationEntry)) continue;
 
   renderClearSigningPrompt(JSON.parse(new TextDecoder().decode(descriptorBytes)));
@@ -258,32 +265,36 @@ for (const entry of resolved) {
 throw new Error("Valid entry not found")
 ```
 
-## 4. `revokeFunctions` — retracting functions
+## 4. `revokeDescriptors` — retracting descriptors
 
-Revocation has a single shape: `(contextKeyId, functionKey)`. It states that whatever the attester attested for that function at that context before now is no longer correct. `functionKey` is the 4-byte selector left-aligned in a `bytes32`, or the EIP-712 type hash for typed data. Here the attester retracts the Vault's `transfer` function on both deployments:
+Revocation has a single shape: `(contextKeyId, descriptorHash)`. It states that this exact descriptor content is no longer correct at this context. `descriptorHash` is the same [ERC-8176](https://eips.ethereum.org/EIPS/eip-8176) content hash used everywhere else in this registry — the hash of a whole-contract descriptor, of a manifest (§10), or of one function descriptor within a manifest. The registry never distinguishes which kind it is.
+
+Say the `transfer` function descriptor the attester previously registered (inside the Vault's manifest, §10) turns out to be wrong. The attester retracts that exact descriptor's content on both deployments:
 
 ```TypeScript
-const TRANSFER_KEY: Hex = "0xa9059cbb00000000000000000000000000000000000000000000000000000000";
+const badTransferDescriptorHash: Hex = "0x7c3a1e2b...5d6e7f"; // the wrong descriptor's own hash
 
-await registryAs(attesterClient).write.revokeFunctions([
+await registryAs(attesterClient).write.revokeDescriptors([
   attesterAccount.address,
   [
-    { contextKeyId: deriveContextKeyId(mainnetChainId, vaultMainnetAddress), functionKey: TRANSFER_KEY },
-    { contextKeyId: deriveContextKeyId(optimismChainId, vaultOptimismAddress), functionKey: TRANSFER_KEY },
+    { contextKeyId: deriveContextKeyId(mainnetChainId, vaultMainnetAddress), descriptorHash: badTransferDescriptorHash },
+    { contextKeyId: deriveContextKeyId(optimismChainId, vaultOptimismAddress), descriptorHash: badTransferDescriptorHash },
   ],
   "0x", // signature
 ]);
 ```
 
-An attestation for the tuple is void when its signed issue time is at or before the recorded timestamp; an attestation issued after it is valid. Revoking a tuple again moves its timestamp forward. The registry does not check that the function was ever registered.
+`badTransferDescriptorHash` is void at these contexts forever — there is no un-revoke. A correction is never affected by this call: a different `transfer` description hashes to a different value, so a corrected descriptor is valid from the moment it is attested and published, with nothing to coordinate against the revocation. The registry does not check that the content was ever attested or registered.
 
-The `revokeFunctions` function can also be invoked with an EIP-712 signature similar to `createAttestations`.
+The same call retires a whole release in one shot — pass the manifest's own `descriptorHash` (from §10) instead of one function's, and every function inside that manifest becomes unreachable at that context without a separate call per function.
+
+The `revokeDescriptors` function can also be invoked with an EIP-712 signature similar to `createAttestations`.
 
 ## 5. Using `createAttestations` for updates & relayed transactions
 
 In this example we are issuing an update to the previously registered `Vault` contract.
 This is a legitimate and common operation - the contract may be upgradeable and changed its behaviour.
-`createAttestations` replaces the active record without any prior revocation. Replacement is not revocation: an attester MUST separately revoke every function whose descriptor is replaced or removed — here, `transfer` was revoked in the previous section.
+`createAttestations` replaces the active record without any prior revocation. Replacement is not revocation: an attester MUST separately revoke the exact `descriptorHash` of every descriptor that is replaced or removed — here, the old `transfer` descriptor's hash was revoked in the previous section.
 We will also use a relayer address instead of making the registry call directly from the attester's EOA address.
 
 ```TypeScript
@@ -440,19 +451,34 @@ const resolvedFactory = await registryRead.read.resolveDescriptors([
 // shape identical to §3's output — one entry per contextKeyId, same fields
 ```
 
-## 10. Per-function descriptors — manifests and function revocation
+## 10. Per-function descriptors — manifests and descriptor revocation
 
-A descriptor file may cover a single function. The record the registry stores under a contract's `contextKeyId` then points at a *manifest*: a JSON file keyed by `functionKey` that lists, for each function, its descriptor hash, mirror URIs and attestation IDs. The manifest's hash is the `descriptorHash` registered in §2; it carries an ordinary attestation. Function attestations are not registered on-chain — a device verifies one function descriptor against one attestation and never sees the manifest.
+A descriptor file may cover a single function or [EIP-712](https://eips.ethereum.org/EIPS/eip-712) message instead of a whole contract. The record the registry stores under a contract's `contextKeyId` then points at a *manifest*: a JSON file listing, for each function or message the contract supports, its own descriptor hash, mirror URIs and attestation IDs. The manifest's own hash is the `descriptorHash` registered in §2; it carries an ordinary attestation. Function attestations are not registered on-chain — a device verifies one function descriptor against one attestation and never sees the manifest.
+
+A manifest keys contract calls and typed messages separately, since they're resolved differently — a wallet always knows which kind of request it's handling before it looks anything up:
+
+```json
+{
+  "version": 1,
+  "methods": {
+    "0xa9059cbb": { "descriptorHash": "0x...", "descriptorUris": ["ipfs://.../transfer.json"], "attestations": [{ "attestationId": "0x...", "attestationFormatId": "0x9b2c...eas0f", "uris": ["ipfs://.../transfer.attestation.json"] }] }
+  },
+  "messages": {
+    "0x8b73c3c6...": { "descriptorHash": "0x...", "descriptorUris": ["ipfs://.../permit.json"], "attestations": [{ "attestationId": "0x...", "attestationFormatId": "0x9b2c...eas0f", "uris": ["ipfs://.../permit.attestation.json"] }] }
+  }
+}
+```
+
+`methods` is keyed by the raw 4-byte function selector; `messages` by the [EIP-712](https://eips.ethereum.org/EIPS/eip-712) `typeHash` of the message's primary type — no padding or unification between the two.
 
 Registering a manifest costs the same however many functions it lists. Registering a newer manifest replaces the index only, exactly as in §5.
 
-A wallet checks revocation per function, using the `contextKeyId` it resolved through:
+A wallet checks revocation twice: once at the top level against the manifest's own hash (§3 — skips fetching the manifest entirely if revoked), and again for the specific function descriptor it resolves, reusing the hash it already computed while verifying the attestation per ERC-8176:
 
 ```TypeScript
-const functionKey: Hex = `${calldata.slice(0, 10)}${"00".repeat(28)}`; // selector left-aligned in a bytes32
-const revokedAt = await registryRead.read.getFunctionRevocationTimestamp([attesterAccount.address, contextKeyId, functionKey]);
-// The attestation's signed issue time comes from the attestation itself (for EAS off-chain attestations, its `time`).
-if (revokedAt !== 0n && attestationIssuedAt <= revokedAt) throw new Error("attestation revoked");
+const descriptorHash = computeDescriptorHash(functionDescriptor); // already required by ERC-8176 attestation verification
+const revokedAt = await registryRead.read.getDescriptorRevocationTimestamp([attesterAccount.address, contextKeyId, descriptorHash]);
+if (revokedAt !== 0n) throw new Error("descriptor revoked");
 ```
 
 ## Errors at a glance
@@ -472,6 +498,6 @@ if (revokedAt !== 0n && attestationIssuedAt <= revokedAt) throw new Error("attes
 | `UnknownMirrorList` | a `descriptorMirrorListId`/`attestationMirrorListId` was never published via `publishMirrorLists` | §2 |
 | `UnknownDescriptor` | `updateDescriptorMirrorList` names a descriptor hash the attester never registered | §6 |
 | `UnknownAttestationSet` | `updateAttestationMirrorList` names a set id the attester never registered | §7 |
-| `EmptyRevocations` | `revokeFunctions` is called with an empty `revocations` array | §4 |
+| `EmptyRevocations` | `revokeDescriptors` is called with an empty `revocations` array | §4 |
 | `EmptyKeys` | `updateDescriptorMirrorList`/`updateAttestationMirrorList` is given an empty key array | §6 |
 | `InvalidRegistrationSignature` | any relayed `signature` fails to verify for the named attester | §5 |

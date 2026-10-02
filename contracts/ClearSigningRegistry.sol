@@ -34,13 +34,14 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     mapping(address attester => mapping(bytes32 attestationSetId => AttestationIdentifier[]))
         private _attestationSetContents;
 
-    // The timestamp at which 'attester' last revoked a function at a context, or 0 if never
-    // revoked. The registry does not relate this to any registered record: it is the attester's
-    // statement about a '(contextKeyId, functionKey)' tuple, evaluated by the consumer against the
-    // issue time of the attestation it holds. Written by a 'revokeFunctions' batch, submitted
-    // directly or relayed with a signature.
-    mapping(address attester => mapping(bytes32 contextKeyId => mapping(bytes32 functionKey => uint64)))
-        private _functionRevokedAt;
+    // The timestamp at which 'attester' revoked 'descriptorHash' at 'contextKeyId', or 0 if never
+    // revoked. The registry does not relate this to any registered record — it never checks that
+    // the content was ever attested or registered, and there is no un-revoke. Works uniformly for
+    // a whole-contract descriptor, a manifest, or a single-function descriptor: all three are just
+    // an opaque content hash here. Written by a 'revokeDescriptors' batch, submitted directly or
+    // relayed with a signature.
+    mapping(address attester => mapping(bytes32 contextKeyId => mapping(bytes32 descriptorHash => uint64)))
+        private _descriptorRevokedAt;
 
     // Global store of MirrorLists, written once per unique URI set.
     mapping(bytes32 mirrorListId => string[]) private _mirrorLists;
@@ -81,8 +82,8 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         _authorizeRegistration(attester, descriptors, descriptorMirrorListId, attestationMirrorListId, signature);
 
         // Replacing an active record needs no prior revocation. Replacement is not
-        // revocation: attestations for changed functions stay valid until the attester
-        // revokes them via 'revokeFunctions'.
+        // revocation: a superseded descriptor's content stays valid until the attester
+        // revokes its exact 'descriptorHash' via 'revokeDescriptors'.
         _processAllDescriptors(attester, descriptors, descriptorMirrorListId, attestationMirrorListId);
     }
 
@@ -181,10 +182,10 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @inheritdoc IClearSigningRegistry
-    function revokeFunctions(
-        address              attester,
-        FunctionRevocation[] calldata revocations,
-        bytes                calldata signature
+    function revokeDescriptors(
+        address                attester,
+        DescriptorRevocation[] calldata revocations,
+        bytes                  calldata signature
     ) external {
         if (revocations.length == 0) {
             revert EmptyRevocations();
@@ -192,15 +193,16 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         if (msg.sender != attester) {
             uint256 nonce = _nonces[attester];
             _nonces[attester] = nonce + 1;
-            _verifyFunctionRevocationSignature(attester, revocations, nonce, signature);
+            _verifyDescriptorRevocationSignature(attester, revocations, nonce, signature);
         }
 
         uint64 timestamp = uint64(block.timestamp);
         for (uint256 revocationIndex = 0; revocationIndex < revocations.length; revocationIndex++) {
-            FunctionRevocation calldata revocation = revocations[revocationIndex];
-            // Overwritten on repeat: a later revocation voids every attestation issued up to now.
-            _functionRevokedAt[attester][revocation.contextKeyId][revocation.functionKey] = timestamp;
-            emit FunctionRevoked(attester, revocation.contextKeyId, revocation.functionKey, timestamp);
+            DescriptorRevocation calldata revocation = revocations[revocationIndex];
+            // Overwritten on repeat: an audit-trail timestamp only, never consulted for
+            // ordering — the pair is void from the moment it is first recorded, forever.
+            _descriptorRevokedAt[attester][revocation.contextKeyId][revocation.descriptorHash] = timestamp;
+            emit DescriptorRevoked(attester, revocation.contextKeyId, revocation.descriptorHash, timestamp);
         }
     }
 
@@ -236,10 +238,10 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @inheritdoc IClearSigningRegistry
-    function getFunctionRevocationTimestamp(address attester, bytes32 contextKeyId, bytes32 functionKey)
+    function getDescriptorRevocationTimestamp(address attester, bytes32 contextKeyId, bytes32 descriptorHash)
         external view returns (uint64)
     {
-        return _functionRevokedAt[attester][contextKeyId][functionKey];
+        return _descriptorRevokedAt[attester][contextKeyId][descriptorHash];
     }
 
     /// @inheritdoc IClearSigningRegistry
@@ -620,7 +622,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     /// @dev Verifies the attester's EIP-712 signature over a registration batch.
     ///      Binding both MirrorList IDs prevents a relayer from substituting different
     ///      MirrorLists; the nonce makes the signature single-use. Revocation is a
-    ///      separate, independently-signed 'revokeFunctions' action, so no
+    ///      separate, independently-signed 'revokeDescriptors' action, so no
     ///      revocation data is bound here.
     function _verifyRegistrationSignature(
         address                    attester,
@@ -643,16 +645,16 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     }
 
     /// @dev Verifies the attester's EIP-712 signature over a standalone revocation batch.
-    function _verifyFunctionRevocationSignature(
-        address                       attester,
-        FunctionRevocation[] calldata revocations,
-        uint256                       nonce,
-        bytes                calldata signature
+    function _verifyDescriptorRevocationSignature(
+        address                attester,
+        DescriptorRevocation[] calldata revocations,
+        uint256                nonce,
+        bytes                  calldata signature
     ) private view {
         bytes32 structHash = keccak256(
             abi.encode(
-                ClearSigningRegistryConstants.FUNCTION_REVOCATION_BATCH_TYPEHASH,
-                RegistrationHashLib.hashFunctionRevocations(revocations),
+                ClearSigningRegistryConstants.DESCRIPTOR_REVOCATION_BATCH_TYPEHASH,
+                RegistrationHashLib.hashDescriptorRevocations(revocations),
                 nonce
             )
         );

@@ -6,7 +6,7 @@ import "./ClearSigningRegistryConstants.sol";
 
 /// @title  RegistrationHashLib — EIP-712 struct-hash helpers for registration and revocation batches
 /// @notice Pure hashing only; no storage access. Attach via 'using RegistrationHashLib for
-///         DescriptorInfo[]' / 'FunctionRevocation[]', or call the functions directly.
+///         DescriptorInfo[]' / 'DescriptorRevocation[]', or call the functions directly.
 library RegistrationHashLib {
     /// @dev EIP-712 array-hash of 'descriptors': one descriptorInfo hash per entry
     ///      (covering the descriptor identity and its attestation set together),
@@ -55,9 +55,9 @@ library RegistrationHashLib {
         return keccak256(abi.encodePacked(entryHashes));
     }
 
-    /// @dev EIP-712 array-hash of 'revocations': one 'FUNCTION_REVOCATION_TYPEHASH' hash per
+    /// @dev EIP-712 array-hash of 'revocations': one 'DESCRIPTOR_REVOCATION_TYPEHASH' hash per
     ///      entry, aggregated via 'keccak256(abi.encodePacked(...))'.
-    function hashFunctionRevocations(IClearSigningRegistry.FunctionRevocation[] calldata revocations)
+    function hashDescriptorRevocations(IClearSigningRegistry.DescriptorRevocation[] calldata revocations)
         internal pure returns (bytes32)
     {
         uint256 count = revocations.length;
@@ -65,9 +65,9 @@ library RegistrationHashLib {
         for (uint256 i = 0; i < count; i++) {
             entryHashes[i] = keccak256(
                 abi.encode(
-                    ClearSigningRegistryConstants.FUNCTION_REVOCATION_TYPEHASH,
+                    ClearSigningRegistryConstants.DESCRIPTOR_REVOCATION_TYPEHASH,
                     revocations[i].contextKeyId,
-                    revocations[i].functionKey
+                    revocations[i].descriptorHash
                 )
             );
         }
