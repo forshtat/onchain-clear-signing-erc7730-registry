@@ -242,7 +242,7 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
 ]
 ```
 
-The wallet validates every candidate entry, checking for availability and validity (pseudocode). `getDescriptorRevocationTimestamp` is checked first, directly against the entry's own `descriptorHash` and `contextKeyId` — no fetch needed to rule out a revoked release. A per-function descriptor's own revocation is checked separately, inside manifest resolution — see §10:
+The wallet validates every candidate entry, checking for availability and validity (pseudocode). `getDescriptorRevocationTimestamp` is checked first, directly against the entry's own `descriptorHash` and `contextKeyId` — no fetch needed to rule out a revoked release. A per-function descriptor's own revocation is checked separately, inside function index resolution — see §10:
 
 ```TypeScript
 for (const entry of resolved) {
@@ -267,11 +267,11 @@ throw new Error("Valid entry not found")
 
 ## 4. `revokeDescriptors` — retracting descriptors
 
-Revocation has a single shape: `(contextKeyId, descriptorHash)`. It states that this exact descriptor content is no longer correct at this context. `descriptorHash` is the same [ERC-8176](https://eips.ethereum.org/EIPS/eip-8176) content hash used everywhere else in this registry — the hash of a whole-contract descriptor, of a manifest (§10), or of one function descriptor within a manifest. The registry never distinguishes which kind it is.
+Revocation has a single shape: `(contextKeyId, descriptorHash)`. It states that this exact descriptor content is no longer correct at this context. `descriptorHash` is the same [ERC-8176](https://eips.ethereum.org/EIPS/eip-8176) content hash used everywhere else in this registry — the hash of a whole-contract descriptor, of a function index (§10), or of one function descriptor within a function index. The registry never distinguishes which kind it is.
 
-`createAttestations` (§5) already auto-revokes whatever it displaces, so this call is for a narrower case: a *standalone* revocation with no replacement registered in the same step — an emergency stop, or killing one bad function descriptor's hash *inside an otherwise-unchanged manifest* (§10), which the registry never sees and so can never auto-revoke on its own.
+`createAttestations` (§5) already auto-revokes whatever it displaces, so this call is for a narrower case: a *standalone* revocation with no replacement registered in the same step — an emergency stop, or killing one bad function descriptor's hash *inside an otherwise-unchanged function index* (§10), which the registry never sees and so can never auto-revoke on its own.
 
-Say the `transfer` function descriptor inside the Vault's manifest (§10) turns out to be wrong, and the attester isn't ready to publish a corrected manifest yet. They retract that exact descriptor's content on both deployments, immediately:
+Say the `transfer` function descriptor inside the Vault's function index (§10) turns out to be wrong, and the attester isn't ready to publish a corrected function index yet. They retract that exact descriptor's content on both deployments, immediately:
 
 ```TypeScript
 const badTransferDescriptorHash: Hex = "0x1a2b3c4d...f0e1d2c3"; // the wrong function descriptor's own hash
@@ -294,7 +294,7 @@ The `revokeDescriptors` function can also be invoked with an EIP-712 signature s
 
 In this example we are issuing an update to the previously registered `Vault` contract.
 This is a legitimate and common operation - the contract may be upgradeable and changed its behaviour.
-`createAttestations` needs no prior revocation to replace an active record: displacing the old `vaultDescriptor` from §2 auto-revokes its exact `descriptorHash`, at both contexts, atomically with this very call — no separate step, nothing the attester could forget. This covers only the registered `descriptorHash` itself, though: if instead only one function *inside* an otherwise-unchanged manifest had changed (§10), that function's own hash is invisible to the registry and still needs an explicit `revokeDescriptors` call, as in §4.
+`createAttestations` needs no prior revocation to replace an active record: displacing the old `vaultDescriptor` from §2 auto-revokes its exact `descriptorHash`, at both contexts, atomically with this very call — no separate step, nothing the attester could forget. This covers only the registered `descriptorHash` itself, though: if instead only one function *inside* an otherwise-unchanged function index had changed (§10), that function's own hash is invisible to the registry and still needs an explicit `revokeDescriptors` call, as in §4.
 We will also use a relayer address instead of making the registry call directly from the attester's EOA address.
 
 ```TypeScript
@@ -458,11 +458,11 @@ const resolvedFactory = await registryRead.read.resolveDescriptors([
 // shape identical to §3's output — one entry per contextKeyId, same fields
 ```
 
-## 10. Per-function descriptors — manifests and descriptor revocation
+## 10. Per-function descriptors — function indexes and descriptor revocation
 
-A descriptor file may cover a single function or [EIP-712](https://eips.ethereum.org/EIPS/eip-712) message instead of a whole contract. The record the registry stores under a contract's `contextKeyId` then points at a *manifest*: a JSON file listing, for each function or message the contract supports, its own descriptor hash, mirror URIs and attestation IDs. The manifest's own hash is the `descriptorHash` registered in §2; it carries an ordinary attestation. Function attestations are not registered on-chain — a device verifies one function descriptor against one attestation and never sees the manifest.
+A descriptor file may cover a single function or [EIP-712](https://eips.ethereum.org/EIPS/eip-712) message instead of a whole contract. The record the registry stores under a contract's `contextKeyId` then points at a *function index*: a JSON file listing, for each function or message the contract supports, its own descriptor hash, mirror URIs and attestation IDs. The function index's own hash is the `descriptorHash` registered in §2; it carries an ordinary attestation. Function attestations are not registered on-chain — a device verifies one function descriptor against one attestation and never sees the function index.
 
-A manifest keys contract calls and typed messages separately, since they're resolved differently — a wallet always knows which kind of request it's handling before it looks anything up:
+A function index keys contract calls and typed messages separately, since they're resolved differently — a wallet always knows which kind of request it's handling before it looks anything up:
 
 ```json
 {
@@ -478,9 +478,9 @@ A manifest keys contract calls and typed messages separately, since they're reso
 
 `methods` is keyed by the raw 4-byte function selector; `messages` by the [EIP-712](https://eips.ethereum.org/EIPS/eip-712) `typeHash` of the message's primary type — no padding or unification between the two.
 
-Registering a manifest costs the same however many functions it lists. Registering a newer manifest replaces the index only, exactly as in §5 — and, per §5, that replacement auto-revokes the *old* manifest's own hash automatically. A function whose descriptor changed *within* the new manifest is a different matter: the registry never sees individual functions, so that function's own old hash is not auto-revoked and needs an explicit `revokeDescriptors` call (§4) if it must be provably dead rather than merely superseded.
+Registering a function index costs the same however many functions it lists. Registering a newer one simply supersedes it, exactly as in §5 — and, per §5, that replacement auto-revokes the *old* function index's own hash automatically. A function whose descriptor changed *within* the new function index is a different matter: the registry never sees individual functions, so that function's own old hash is not auto-revoked and needs an explicit `revokeDescriptors` call (§4) if it must be provably dead rather than merely superseded.
 
-A wallet checks revocation twice: once at the top level against the manifest's own hash (§3 — skips fetching the manifest entirely if revoked; guaranteed non-zero for any manifest that was ever displaced, not merely advisory), and again for the specific function descriptor it resolves, reusing the hash it already computed while verifying the attestation per ERC-8176:
+A wallet checks revocation twice: once at the top level against the function index's own hash (§3 — skips fetching the function index entirely if revoked; guaranteed non-zero for any function index that was ever displaced, not merely advisory), and again for the specific function descriptor it resolves, reusing the hash it already computed while verifying the attestation per ERC-8176:
 
 ```TypeScript
 const descriptorHash = computeDescriptorHash(functionDescriptor); // already required by ERC-8176 attestation verification

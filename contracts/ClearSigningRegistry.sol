@@ -37,7 +37,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     // The timestamp at which 'attester' revoked 'descriptorHash' at 'contextKeyId', or 0 if never
     // revoked. The registry does not relate this to any registered record — it never checks that
     // the content was ever attested or registered, and there is no un-revoke. Works uniformly for
-    // a whole-contract descriptor, a manifest, or a single-function descriptor: all three are just
+    // a whole-contract descriptor, a function index, or a single-function descriptor: all three are just
     // an opaque content hash here. Written by a 'revokeDescriptors' batch, submitted directly or
     // relayed with a signature.
     mapping(address attester => mapping(bytes32 contextKeyId => mapping(bytes32 descriptorHash => uint64)))
@@ -85,7 +85,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         // the descriptor hash it displaces, atomically, in '_updateActiveAttestation'. This
         // only covers what the registry actually sees: the registered descriptorHash itself.
         // Content nested inside it and invisible on-chain — e.g. one function's descriptor
-        // inside a manifest — is not auto-revoked when only that nested content changes, and
+        // inside a function index — is not auto-revoked when only that nested content changes, and
         // still needs an explicit 'revokeDescriptors' call for its own hash.
         _processAllDescriptors(attester, descriptors, descriptorMirrorListId, attestationMirrorListId);
     }

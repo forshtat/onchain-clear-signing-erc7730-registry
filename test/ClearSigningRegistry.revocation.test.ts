@@ -14,7 +14,7 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
   const contextA = hashOf("context-a");
   const contextB = hashOf("context-b");
   // Stand-ins for content hashes — e.g. a function descriptor's ERC-8176 descriptorHash, or a
-  // whole-contract descriptor's / manifest's own descriptorHash. The registry treats all of
+  // whole-contract descriptor's / function index's own descriptorHash. The registry treats all of
   // these identically: an opaque bytes32 naming exact content.
   const oldTransferHash = hashOf("descriptor-transfer-v1");
   const approveHash = hashOf("descriptor-approve-v1");
@@ -25,7 +25,7 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     return { attester, relayer, registry };
   }
 
-  async function registerManifest(
+  async function registerFunctionIndex(
     registry: Awaited<ReturnType<typeof deploy>>["registry"],
     attesterAddress: `0x${string}`,
     label: string,
@@ -37,7 +37,7 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     const descriptorMirrorListId = keccak256(encodeAbiParameters([{ type: "string[]" }], [descriptorUris]));
     const attestationMirrorListId = keccak256(encodeAbiParameters([{ type: "string[]" }], [attestationUris]));
     const descriptor = {
-      descriptorHash: hashOf(`manifest-${label}`),
+      descriptorHash: hashOf(`function-index-${label}`),
       descriptorSchemaMajor: 1n,
       contextKeyIds,
       attestationIds: [{ attestationId: hashOf(`att-${label}`), attestationFormatId: hashOf("erc7730.attestation.eas.offchain") }],
@@ -74,12 +74,12 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
   });
 
   it("works identically for a whole-descriptor hash, not just a function's", async function () {
-    // The registry never distinguishes a whole-contract descriptor, a manifest, or a
-    // single-function descriptor — revoking a manifest's own descriptorHash uses the
+    // The registry never distinguishes a whole-contract descriptor, a function index, or a
+    // single-function descriptor — revoking a function index's own descriptorHash uses the
     // exact same call as revoking one function within it.
     const { attester, registry } = await deploy();
     const who = attester.account.address;
-    const { descriptor } = await registerManifest(registry, who, "release-1", [contextA]);
+    const { descriptor } = await registerFunctionIndex(registry, who, "release-1", [contextA]);
 
     await registry.write.revokeDescriptors([who, [{ contextKeyId: contextA, descriptorHash: descriptor.descriptorHash }], "0x"]);
 
@@ -200,8 +200,8 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     const { attester, registry } = await deploy();
     const who = attester.account.address;
 
-    await registerManifest(registry, who, "v1", [contextA]);
-    const v2 = await registerManifest(registry, who, "v2", [contextA]);
+    await registerFunctionIndex(registry, who, "v1", [contextA]);
+    const v2 = await registerFunctionIndex(registry, who, "v2", [contextA]);
 
     const [resolved] = await registry.read.resolveDescriptors([[who], [contextA], [1n], [], []]);
     assert.equal(resolved.descriptorHash, v2.descriptor.descriptorHash);
@@ -211,10 +211,10 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     const { attester, registry } = await deploy();
     const who = attester.account.address;
 
-    const v1 = await registerManifest(registry, who, "v1", [contextA]);
+    const v1 = await registerFunctionIndex(registry, who, "v1", [contextA]);
     assert.equal(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]), 0n);
 
-    const v2 = await registerManifest(registry, who, "v2", [contextA]);
+    const v2 = await registerFunctionIndex(registry, who, "v2", [contextA]);
     await publicClient.waitForTransactionReceipt({ hash: v2.hash });
 
     assert.notEqual(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]), 0n);
@@ -228,10 +228,10 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     const { attester, registry } = await deploy();
     const who = attester.account.address;
 
-    await registerManifest(registry, who, "shared-v1", [contextA, contextB]);
-    await registerManifest(registry, who, "shared-v2", [contextA]); // only displaces contextA
+    await registerFunctionIndex(registry, who, "shared-v1", [contextA, contextB]);
+    await registerFunctionIndex(registry, who, "shared-v2", [contextA]); // only displaces contextA
 
-    const v1Hash = hashOf("manifest-shared-v1");
+    const v1Hash = hashOf("function-index-shared-v1");
     assert.notEqual(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1Hash]), 0n);
     assert.equal(await registry.read.getDescriptorRevocationTimestamp([who, contextB, v1Hash]), 0n);
 
@@ -243,8 +243,8 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     const { attester, registry } = await deploy();
     const who = attester.account.address;
 
-    await registerManifest(registry, who, "v1", [contextA]);
-    await registerManifest(registry, who, "v2", [contextA]); // auto-revokes v1's hash at contextA
+    await registerFunctionIndex(registry, who, "v1", [contextA]);
+    await registerFunctionIndex(registry, who, "v2", [contextA]); // auto-revokes v1's hash at contextA
 
     // Trying to bring v1's exact content back, at the same context, must fail.
     const descriptorUris = ["ipfs://descriptor-v1-revival"];
@@ -257,7 +257,7 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
       registry.write.createAttestations([
         who,
         [{
-          descriptorHash: hashOf("manifest-v1"),
+          descriptorHash: hashOf("function-index-v1"),
           descriptorSchemaMajor: 1n,
           contextKeyIds: [contextA],
           attestationIds: [{ attestationId: hashOf("att-v1-revival"), attestationFormatId: hashOf("erc7730.attestation.eas.offchain") }],
@@ -301,14 +301,14 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     const { attester, registry } = await deploy();
     const who = attester.account.address;
 
-    const v1 = await registerManifest(registry, who, "v1", [contextA]);
+    const v1 = await registerFunctionIndex(registry, who, "v1", [contextA]);
     await registry.write.revokeDescriptors([who, [{ contextKeyId: contextA, descriptorHash: v1.descriptor.descriptorHash }], "0x"]);
     const explicitTimestamp = await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]);
 
     await networkHelpers.time.increase(100);
     // v1 is still (surprisingly, but validly) the active record — explicit revocation does
     // not clear the active pointer — so this still counts as a displacement.
-    await registerManifest(registry, who, "v2", [contextA]);
+    await registerFunctionIndex(registry, who, "v2", [contextA]);
 
     assert.equal(
       await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]),
