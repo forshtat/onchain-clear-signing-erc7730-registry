@@ -207,6 +207,33 @@ describe("ClearSigningRegistry descriptor revocation", async function () {
     assert.equal(resolved.descriptorHash, v2.descriptor.descriptorHash);
   });
 
+  it("resolveDescriptors reports revocation inline, with no separate call needed", async function () {
+    const { attester, registry } = await deploy();
+    const who = attester.account.address;
+
+    const v1 = await registerFunctionIndex(registry, who, "v1", [contextA]);
+
+    const [freshResolved] = await registry.read.resolveDescriptors([[who], [contextA], [1n], [], []]);
+    assert.equal(freshResolved.revokedAt, 0n);
+
+    // Auto-revoked by displacement: resolving the NEW active record should show it clean...
+    const v2 = await registerFunctionIndex(registry, who, "v2", [contextA]);
+    const [v2Resolved] = await registry.read.resolveDescriptors([[who], [contextA], [1n], [], []]);
+    assert.equal(v2Resolved.descriptorHash, v2.descriptor.descriptorHash);
+    assert.equal(v2Resolved.revokedAt, 0n);
+
+    // ...while the OLD hash is now provably dead, confirmed the same way resolveDescriptors
+    // would report it if it were still the active record (it's displaced, so we check the
+    // underlying mapping directly here, same value resolveDescriptors would have inlined).
+    assert.notEqual(await registry.read.getDescriptorRevocationTimestamp([who, contextA, v1.descriptor.descriptorHash]), 0n);
+
+    // Now revoke the CURRENTLY active v2 record explicitly (no replacement registered) and
+    // confirm resolveDescriptors itself reflects it without any extra call.
+    await registry.write.revokeDescriptors([who, [{ contextKeyId: contextA, descriptorHash: v2.descriptor.descriptorHash }], "0x"]);
+    const [v2AfterRevoke] = await registry.read.resolveDescriptors([[who], [contextA], [1n], [], []]);
+    assert.notEqual(v2AfterRevoke.revokedAt, 0n);
+  });
+
   it("auto-revokes the displaced descriptorHash atomically, with no separate call", async function () {
     const { attester, registry } = await deploy();
     const who = attester.account.address;

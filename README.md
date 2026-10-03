@@ -222,6 +222,7 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
     "contextKeyId": "0x8b41...c209",
     "descriptorSchemaMajor": "1",
     "attestationSetId": "0x4f0e...d6e7f",
+    "revokedAt": "0",
     "descriptorMirrorListUris": ["ipfs://bafybeigd.../vault-and-staking-descriptors-index.json", "ar://vault-and-staking-descriptors-index-mirror"],
     "attestationMirrorListUris": ["ipfs://bafybeigd.../release-attestations-index.json"],
     "attestations": [
@@ -233,6 +234,7 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
     "contextKeyId": "0x2f19...ab77",
     "descriptorSchemaMajor": "1",
     "attestationSetId": "0x4f0e...d6e7f",
+    "revokedAt": "0",
     "descriptorMirrorListUris": ["ipfs://bafybeigd.../vault-and-staking-descriptors-index.json", "ar://vault-and-staking-descriptors-index-mirror"],
     "attestationMirrorListUris": ["ipfs://bafybeigd.../release-attestations-index.json"],
     "attestations": [
@@ -242,17 +244,14 @@ Returned array — one entry per active `(attester, contextKeyId, descriptorSche
 ]
 ```
 
-The wallet validates every candidate entry, checking for availability and validity (pseudocode). `getDescriptorRevocationTimestamp` is checked first, directly against the entry's own `descriptorHash` and `contextKeyId` — no fetch needed to rule out a revoked release. A per-function descriptor's own revocation is checked separately, inside function index resolution — see §10:
+The wallet validates every candidate entry, checking for availability and validity (pseudocode). `revokedAt` is checked first, directly off the result — no separate call and no fetch needed to rule out a revoked release. A per-function descriptor's own revocation is a different, deeper fact `resolveDescriptors` cannot know about, so it's checked separately, inside function index resolution — see §10:
 
 ```TypeScript
 for (const entry of resolved) {
+  if (entry.revokedAt !== 0n) continue; // this exact release is revoked at this context — skip without fetching anything
+
   const easAttestationEntry = entry.attestations.find((a) => a.attestationFormatId === ATTESTATION_FORMAT_EAS_OFFCHAIN);
   if (!easAttestationEntry) continue;
-
-  const revokedAt = await registryRead.read.getDescriptorRevocationTimestamp(
-    [easAttestationEntry.attester, entry.contextKeyId, entry.descriptorHash],
-  );
-  if (revokedAt !== 0n) continue; // this exact release is revoked at this context — skip without fetching anything
 
   const descriptorBytes = await fetch(entry.descriptorMirrorListUris[0]).then((r) => r.arrayBuffer());
   if (!isValidDescriptor(descriptorBytes)) continue;

@@ -23,10 +23,13 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
     /// @notice The ClearSigningRegistry does not enforce or prioritize any attestation formats.
     mapping(address attester => mapping(bytes32 contextKeyId => mapping(uint256 descriptorSchemaMajor => bytes32))) private _activeAttestationSetIds;
 
-    // Metadata of an attestation set.
+    // Write-once metadata of an attestation set.
     struct AttestationSetDetails {
+        // The registered content's own hash. Usually a function index's hash; may instead
+        // be a plain one-file descriptor's own ERC-8176 hash if the attester registers a
+        // whole-contract descriptor directly, without going through a function index.
         bytes32 functionIndexHash;
-        uint256 descriptorSchemaMajor;
+        uint256 descriptorSchemaMajor;             // the declared schema MAJOR; opaque to the registry
     }
 
     mapping(address attester => mapping(bytes32 attestationSetId => AttestationSetDetails))
@@ -164,7 +167,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
 
             if (previousAttestationSetId != bytes32(0)) {
                 bytes32 previousDescriptorHash =
-                    _attestationSetDetails[attester][previousAttestationSetId].descriptorHash;
+                    _attestationSetDetails[attester][previousAttestationSetId].functionIndexHash;
                 if (_descriptorRevokedAt[attester][contextKeyId][previousDescriptorHash] == 0) {
                     _descriptorRevokedAt[attester][contextKeyId][previousDescriptorHash] = timestamp;
                     emit DescriptorRevoked(attester, contextKeyId, previousDescriptorHash, timestamp);
@@ -359,14 +362,15 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         string[]  calldata allowedPrefixes
     ) private view returns (ResolvedDescriptor memory) {
         AttestationSetDetails storage details = _attestationSetDetails[attester][attestationSetId];
-        bytes32 descriptorMirrorListId  = _descriptorMirrorListIds[attester][details.descriptorHash];
+        bytes32 descriptorMirrorListId  = _descriptorMirrorListIds[attester][details.functionIndexHash];
         bytes32 attestationMirrorListId = _attestationMirrorListIds[attester][attestationSetId];
 
         return ResolvedDescriptor({
-            descriptorHash:            details.descriptorHash,
+            descriptorHash:            details.functionIndexHash,
             contextKeyId:                 contextKeyId,
             descriptorSchemaMajor:               descriptorSchemaMajor,
             attestationSetId:          attestationSetId,
+            revokedAt:                 _descriptorRevokedAt[attester][contextKeyId][details.functionIndexHash],
             descriptorMirrorListUris:  _mirrorLists[descriptorMirrorListId].filter(allowedPrefixes),
             attestationMirrorListUris: _mirrorLists[attestationMirrorListId].filter(allowedPrefixes),
             attestations:              _resolveAttestations(attester, attestationSetId, attestationFormatIds)
@@ -473,7 +477,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
 
         for (uint256 i = 0; i < attestationSetIds.length; i++) {
             bytes32 attestationSetId = attestationSetIds[i];
-            if (_attestationSetDetails[attester][attestationSetId].descriptorHash == bytes32(0)) {
+            if (_attestationSetDetails[attester][attestationSetId].functionIndexHash == bytes32(0)) {
                 revert UnknownAttestationSet(attestationSetId);
             }
             _setAttestationMirrorList(attester, attestationSetId, attestationMirrorListId);
@@ -595,7 +599,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         DescriptorInfo calldata descriptor
     ) private {
         AttestationSetDetails storage details = _attestationSetDetails[attester][attestationSetId];
-        if (details.descriptorHash != bytes32(0)) {
+        if (details.functionIndexHash != bytes32(0)) {
             // The singleton shortcut makes a set ID attester-chosen, so the ID alone does
             // not commit to what it names — the stored record must match the incoming
             // descriptor before the set may be reused. (Content-derived multi-set IDs
@@ -604,7 +608,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
             return;
         }
 
-        details.descriptorHash = descriptor.descriptorHash;
+        details.functionIndexHash = descriptor.descriptorHash;
         details.descriptorSchemaMajor    = descriptor.descriptorSchemaMajor;
 
         AttestationIdentifier[] calldata attestationIds = descriptor.attestationIds;
@@ -630,7 +634,7 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
         AttestationIdentifier[] calldata attestationIds = descriptor.attestationIds;
         AttestationIdentifier[] storage  contents       = _attestationSetContents[attester][attestationSetId];
 
-        bool matches = details.descriptorHash == descriptor.descriptorHash
+        bool matches = details.functionIndexHash == descriptor.descriptorHash
             && details.descriptorSchemaMajor == descriptor.descriptorSchemaMajor
             && contents.length == attestationIds.length;
         if (matches) {
