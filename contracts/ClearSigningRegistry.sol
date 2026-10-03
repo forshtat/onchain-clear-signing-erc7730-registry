@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+
 import "./IClearSigningRegistry.sol";
 import "./ClearSigningRegistryConstants.sol";
 import "./UriFilterLib.sol";
 import "./RegistrationHashLib.sol";
-import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
-import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 /// @title  ClearSigningRegistry — On-Chain Registry for ERC-7730 Clear Signing Descriptors
 /// @notice Reference implementation of IClearSigningRegistry.
@@ -15,17 +16,19 @@ contract ClearSigningRegistry is IClearSigningRegistry, EIP712 {
 
     constructor() EIP712("ClearSigningRegistry", "1") {}
 
-    // The attestation set ID currently active for the given attester, context ID and
-    // schema MAJOR. Records of different schema MAJORs never displace each other.
-    // The attested descriptor hash is stored in '_attestationSetDetails'.
-    mapping(address attester => mapping(bytes32 contextKeyId => mapping(uint256 descriptorSchemaMajor => bytes32)))
-        private _activeAttestationSetIds;
+    /// @notice The attestation set currently **active** for the given attester, context, and schema MAJOR.
+    /// @notice Each attestation in the set covers the same contract, represented by its 'function index' file.
+    /// @notice The 'function index' is shared by elements of '_attestationSetContents' array and is stored in '_attestationSetDetails'.
+    /// @notice The individual attestations in the set are created for different 'attestation formats': ERC-8176, ECDSA signatures, or others.
+    /// @notice The ClearSigningRegistry does not enforce or prioritize any attestation formats.
+    mapping(address attester => mapping(bytes32 contextKeyId => mapping(uint256 descriptorSchemaMajor => bytes32))) private _activeAttestationSetIds;
 
-    // Write-once metadata of an attestation set.
+    // Metadata of an attestation set.
     struct AttestationSetDetails {
-        bytes32 descriptorHash;
-        uint256 descriptorSchemaMajor;             // the declared schema MAJOR; opaque to the registry
+        bytes32 functionIndexHash;
+        uint256 descriptorSchemaMajor;
     }
+
     mapping(address attester => mapping(bytes32 attestationSetId => AttestationSetDetails))
         private _attestationSetDetails;
 
