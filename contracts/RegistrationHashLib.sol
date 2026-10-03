@@ -4,9 +4,9 @@ pragma solidity ^0.8.24;
 import "./IClearSigningRegistry.sol";
 import "./ClearSigningRegistryConstants.sol";
 
-/// @title  RegistrationHashLib — EIP-712 struct-hash helpers for createAttestations batches
+/// @title  RegistrationHashLib — EIP-712 struct-hash helpers for registration and revocation batches
 /// @notice Pure hashing only; no storage access. Attach via 'using RegistrationHashLib for
-///         DescriptorInfo[]' / 'RevocationEntry[]', or call the functions directly.
+///         DescriptorInfo[]' / 'DescriptorRevocation[]', or call the functions directly.
 library RegistrationHashLib {
     /// @dev EIP-712 array-hash of 'descriptors': one descriptorInfo hash per entry
     ///      (covering the descriptor identity and its attestation set together),
@@ -55,20 +55,19 @@ library RegistrationHashLib {
         return keccak256(abi.encodePacked(entryHashes));
     }
 
-    /// @dev EIP-712 array-hash of 'revocations': one 'REVOCATION_ENTRY_TYPEHASH' hash per
+    /// @dev EIP-712 array-hash of 'revocations': one 'DESCRIPTOR_REVOCATION_TYPEHASH' hash per
     ///      entry, aggregated via 'keccak256(abi.encodePacked(...))'.
-    function hashRevocationEntries(IClearSigningRegistry.RevocationEntry[] calldata revocations)
+    function hashDescriptorRevocations(IClearSigningRegistry.DescriptorRevocation[] calldata revocations)
         internal pure returns (bytes32)
     {
         uint256 count = revocations.length;
         bytes32[] memory entryHashes = new bytes32[](count);
         for (uint256 i = 0; i < count; i++) {
-            IClearSigningRegistry.RevocationEntry calldata entry = revocations[i];
             entryHashes[i] = keccak256(
                 abi.encode(
-                    ClearSigningRegistryConstants.REVOCATION_ENTRY_TYPEHASH,
-                    entry.attestationId,
-                    keccak256(abi.encodePacked(entry.contextKeyIds))
+                    ClearSigningRegistryConstants.DESCRIPTOR_REVOCATION_TYPEHASH,
+                    revocations[i].contextKeyId,
+                    revocations[i].descriptorHash
                 )
             );
         }

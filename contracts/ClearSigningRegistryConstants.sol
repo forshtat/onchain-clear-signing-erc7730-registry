@@ -32,8 +32,8 @@ library ClearSigningRegistryConstants {
         "AttestationIdentifier(bytes32 attestationId,bytes32 attestationFormatId)"
     );
 
-    bytes32 internal constant REVOCATION_ENTRY_TYPEHASH = keccak256(
-        "RevocationEntry(bytes32 attestationId,bytes32[] contextKeyIds)"
+    bytes32 internal constant DESCRIPTOR_REVOCATION_TYPEHASH = keccak256(
+        "DescriptorRevocation(bytes32 contextKeyId,bytes32 descriptorHash)"
     );
 
     bytes32 internal constant REGISTRATION_BATCH_TYPEHASH = keccak256(
@@ -42,9 +42,9 @@ library ClearSigningRegistryConstants {
         "DescriptorInfo(bytes32 descriptorHash,uint256 descriptorSchemaMajor,bytes32[] contextKeyIds,AttestationIdentifier[] attestationIds)"
     );
 
-    bytes32 internal constant REVOCATION_BATCH_TYPEHASH = keccak256(
-        "ClearSigningRevocationBatch(RevocationEntry[] revocations,uint256 nonce)"
-        "RevocationEntry(bytes32 attestationId,bytes32[] contextKeyIds)"
+    bytes32 internal constant DESCRIPTOR_REVOCATION_BATCH_TYPEHASH = keccak256(
+        "ClearSigningDescriptorRevocationBatch(DescriptorRevocation[] revocations,uint256 nonce)"
+        "DescriptorRevocation(bytes32 contextKeyId,bytes32 descriptorHash)"
     );
 
     bytes32 internal constant DESCRIPTOR_MIRROR_UPDATE_TYPEHASH = keccak256(
