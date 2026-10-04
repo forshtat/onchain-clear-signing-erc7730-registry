@@ -1,74 +1,12 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
+import "./structs/MirrorList.sol";
+
 /// @title  IClearSigningRegistry — On-Chain Registry for ERC-7730 Clear Signing Descriptors
 /// @notice Defines the interface for an Ethereum registry that maps ERC-7730 binding context IDs
 ///         to attester-attested descriptors backed by an arbitrary off-chain attestation mechanism.
 interface IClearSigningRegistry {
-
-    /// @notice An identifier of the Attestation used to discover the full attestation data in the off-chain index.
-    ///         Additionally serves as a key to the on-chain attestation revocations mapping.
-    struct AttestationIdentifier {
-        /// The attester-chosen identifier of the attestation.
-        bytes32 attestationId;
-        /// A format identifier calculated as keccak256("erc7730.attestation.<format>")
-        bytes32 attestationFormatId;
-    }
-
-    /// @notice Descriptor data provided to the 'createAttestations' function for new descriptor registration.
-    struct DescriptorInfo {
-        /// The ERC-8176 "descriptor hash" identifier of this Descriptor.
-        bytes32 descriptorHash;
-        /// The MAJOR version of the ERC-7730 descriptor schema per its '$schema' key.
-        uint256 descriptorSchemaMajor;
-        /// Context IDs this descriptor will be discoverable for.
-        bytes32[] contextKeyIds;
-        /// Identifiers and formats of all attestations relating to this Descriptor.
-        AttestationIdentifier[] attestationIds;
-    }
-
-    /// @notice One descriptor at one context being revoked: the attester states that this exact
-    ///         descriptor content is no longer correct at this context. Works uniformly for a
-    ///         whole-contract descriptor, a function index, or a single-function descriptor — the
-    ///         registry never distinguishes them, only their 'descriptorHash' differs.
-    struct DescriptorRevocation {
-        /// The context key ID the descriptor is attested under.
-        bytes32 contextKeyId;
-        /// The ERC-8176 descriptor hash of the exact content being revoked.
-        bytes32 descriptorHash;
-    }
-
-    /// @notice A fully resolved active Attestation structure for ResolvedDescriptor.
-    struct ResolvedAttestation {
-        /// The attester that issued this particular attestation.
-        address attester;
-        /// The attester-chosen identifier of the attestation.
-        bytes32 attestationId;
-        /// A format identifier calculated as keccak256("erc7730.attestation.<format>")
-        bytes32 attestationFormatId;
-    }
-
-    /// @notice A fully resolved active Descriptor with Attestations.
-    struct ResolvedDescriptor {
-        /// The descriptor hash of this Descriptor.
-        bytes32 descriptorHash;
-        /// The context ID the descriptor was found under.
-        bytes32 contextKeyId;
-        /// The schema MAJOR the attestation set was found under.
-        uint256 descriptorSchemaMajor;
-        /// The attestation set ID from the active record — the key into the attestation index file.
-        bytes32 attestationSetId;
-        /// The timestamp at which 'attester' revoked 'descriptorHash' at 'contextKeyId', or 0 if never
-        /// revoked. Checked inline so a caller never needs a separate 'getDescriptorRevocationTimestamp'
-        /// call to rule out a dead top-level record — see ERC-8283 Rationale.
-        uint64 revokedAt;
-        /// The full resolved array of URIs provided for this Descriptor in the MirrorList.
-        string[] descriptorMirrorListUris;
-        /// The MirrorList URIs of the index file for retrieving this set's attestation blobs.
-        string[] attestationMirrorListUris;
-        /// The full resolved array of attestation objects issued for this Descriptor matching the specified filter.
-        ResolvedAttestation[] attestations;
-    }
 
     /// @notice Emitted when an attester's active attestation set for a context ID changes.
     /// @param attester                  The attester whose active attestation set changed.

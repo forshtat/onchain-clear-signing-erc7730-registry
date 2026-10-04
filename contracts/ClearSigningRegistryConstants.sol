@@ -18,44 +18,7 @@ library ClearSigningRegistryConstants {
 
     bytes32 internal constant ATTESTATION_FORMAT_EAS_OFFCHAIN = keccak256("erc7730.attestation.eas.offchain");
 
-    /// Example vendor format for a post-quantum-signed attestation rendition (ML-DSA,
-    /// NIST FIPS 204 / formerly CRYSTALS-Dilithium). Name-dropped to show the format
-    /// tag namespace is open-ended; the registry has no opinion on its actual encoding.
+    /// Example vendor format for a post-quantum-signed attestation rendition (ML-DSA).
+    /// The format namespace is open-ended and the registry has no opinion on attestations actual contents or encoding.
     bytes32 internal constant ATTESTATION_FORMAT_ML_DSA = keccak256("erc7730.attestation.mldsa");
-
-    bytes32 internal constant ATTESTATION_IDENTIFIER_TYPEHASH = keccak256(
-        "AttestationIdentifier(bytes32 attestationId,bytes32 attestationFormatId)"
-    );
-
-    bytes32 internal constant DESCRIPTOR_TYPEHASH = keccak256(
-        "DescriptorInfo(bytes32 descriptorHash,uint256 descriptorSchemaMajor,bytes32[] contextKeyIds,AttestationIdentifier[] attestationIds)"
-        "AttestationIdentifier(bytes32 attestationId,bytes32 attestationFormatId)"
-    );
-
-    bytes32 internal constant DESCRIPTOR_REVOCATION_TYPEHASH = keccak256(
-        "DescriptorRevocation(bytes32 contextKeyId,bytes32 descriptorHash)"
-    );
-
-    bytes32 internal constant REGISTRATION_BATCH_TYPEHASH = keccak256(
-        "ClearSigningRegistrationBatch(DescriptorInfo[] descriptors,bytes32 descriptorMirrorListId,bytes32 attestationMirrorListId,uint256 nonce)"
-        "AttestationIdentifier(bytes32 attestationId,bytes32 attestationFormatId)"
-        "DescriptorInfo(bytes32 descriptorHash,uint256 descriptorSchemaMajor,bytes32[] contextKeyIds,AttestationIdentifier[] attestationIds)"
-    );
-
-    bytes32 internal constant DESCRIPTOR_REVOCATION_BATCH_TYPEHASH = keccak256(
-        "ClearSigningDescriptorRevocationBatch(DescriptorRevocation[] revocations,uint256 nonce)"
-        "DescriptorRevocation(bytes32 contextKeyId,bytes32 descriptorHash)"
-    );
-
-    bytes32 internal constant DESCRIPTOR_MIRROR_UPDATE_TYPEHASH = keccak256(
-        "DescriptorMirrorListUpdate(bytes32[] descriptorHashes,bytes32 descriptorMirrorListId,uint256 nonce)"
-    );
-
-    bytes32 internal constant ATTESTATION_MIRROR_UPDATE_TYPEHASH = keccak256(
-        "AttestationMirrorListUpdate(bytes32[] attestationSetIds,bytes32 attestationMirrorListId,uint256 nonce)"
-    );
-
-    bytes32 internal constant ATTESTER_PROFILE_UPDATE_TYPEHASH = keccak256(
-        "AttesterProfileUpdate(string profileURI,uint256 nonce)"
-    );
 }
