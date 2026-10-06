@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: CC0-1.0
+pragma solidity ^0.8.24;
+
+import "./structs/RegistrationRecord.sol";
+
+/// @notice Events and errors of the attester records store.
+interface IRecordsModule {
+    /// @notice Emitted when an attester writes the record for a context, replacing any previous one.
+    /// @param attester       The attester whose record was written.
+    /// @param contextKeyId   The context ID affected.
+    /// @param record         The newly active record.
+    event RecordWritten(address indexed attester, bytes32 indexed contextKeyId, RegistrationRecord record);
+
+    /// @notice Emitted when an attester deletes the record for a context.
+    /// @param attester       The attester whose record was deleted.
+    /// @param contextKeyId   The context ID affected.
+    event RecordDeleted(address indexed attester, bytes32 indexed contextKeyId);
+
+    /// @notice Thrown when no registration records are passed.
+    error EmptyRecords();
+
+    /// @notice Thrown when 'contextKeyIds' and 'registrationRecords' differ in length.
+    error ArrayLengthMismatch();
+
+    /// @notice Thrown when a record or a deletion lists no context IDs.
+    error EmptyContextKeyIds();
+
+    /// @notice Thrown when a record declares a zero descriptor hash.
+    error ZeroDescriptorHash();
+
+    /// @notice Thrown when a record declares no descriptor schema MAJOR versions.
+    error EmptyDescriptorSchemaMajors();
+}

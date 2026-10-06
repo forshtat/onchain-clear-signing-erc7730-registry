@@ -1,51 +1,36 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
-import "../IClearSigningRegistry.sol";
+import "../structs/AttesterSettings.sol";
 
-contract AttesterSettingsManager {
-    /// @notice Self-declared profile document URI per attester, an on-chain business card of the attesting entity.
-    /// @notice Data provided by these links is a display-only metadata, and users should never trust this input.
-    mapping(address attester => string) private _attesterProfileURIs;
+import "../IAttesterSettingsManager.sol";
 
-    /// @notice The revocation controller (see IRevocationController) an attester declares per attestation format.
-    /// @notice Value is address(0) if the attester declared none. The registry never calls a controller.
-    mapping(address attester => mapping(bytes32 attestationFormatId => address)) private _revocationControllers;
+contract AttesterSettingsManager is IAttesterSettingsManager {
+    /// @notice The settings each attester declared. Empty if the attester never set any.
+    mapping(address attester => AttesterSettings) private _attesterSettings;
 
-    /// @notice The attestation formats an attester declares to use consistently across all of its records.
-    /// @notice A declaration only: records are not checked against it and wallets may act on it as a hint.
-    mapping(address attester => bytes32[]) private _attestationFormatIds;
-
-    /// @inheritdoc IClearSigningRegistry
-    function setAttesterProfileURI(string calldata profileURI) external {
-        _attesterProfileURIs[msg.sender] = profileURI;
-        emit IClearSigningRegistry.AttesterProfileUpdated(msg.sender, profileURI);
+    /// @notice Replace the caller's settings: its profile URI and its declared attestation formats.
+    ///
+    ///         The profile is display-only metadata and MUST NOT be used as trust input, while the declared
+    ///         formats and their revocation controllers are functional hints wallets MAY act on.
+    ///         The registry checks nothing here and never calls a revocation controller.
+    ///         See 'AttesterSettings' for the meaning of each field.
+    ///
+    /// @param settings  The new settings. Replaces all previous settings, empty fields clear them.
+    function updateAttesterSettings(AttesterSettings calldata settings) external {
+        AttesterSettings storage stored = _attesterSettings[msg.sender];
+        stored.profileURI = settings.profileURI;
+        delete stored.attestationFormats;
+        for (uint256 i = 0; i < settings.attestationFormats.length; i++) {
+            stored.attestationFormats.push(settings.attestationFormats[i]);
+        }
+        emit AttesterSettingsUpdated(msg.sender, settings);
     }
 
-    /// @inheritdoc IClearSigningRegistry
-    function getAttesterProfileURI(address attester) external view returns (string memory) {
-        return _attesterProfileURIs[attester];
-    }
-
-    /// @inheritdoc IClearSigningRegistry
-    function setAttestationFormatIds(bytes32[] calldata attestationFormatIds) external {
-        _attestationFormatIds[msg.sender] = attestationFormatIds;
-        emit IClearSigningRegistry.AttestationFormatIdsUpdated(msg.sender, attestationFormatIds);
-    }
-
-    /// @inheritdoc IClearSigningRegistry
-    function getAttestationFormatIds(address attester) external view returns (bytes32[] memory) {
-        return _attestationFormatIds[attester];
-    }
-
-    /// @inheritdoc IClearSigningRegistry
-    function setRevocationController(bytes32 attestationFormatId, address controller) external {
-        _revocationControllers[msg.sender][attestationFormatId] = controller;
-        emit IClearSigningRegistry.RevocationControllerUpdated(msg.sender, attestationFormatId, controller);
-    }
-
-    /// @inheritdoc IClearSigningRegistry
-    function getRevocationController(address attester, bytes32 attestationFormatId) external view returns (address) {
-        return _revocationControllers[attester][attestationFormatId];
+    /// @notice The attester's current settings, or empty settings if it never set any.
+    /// @param attester  The queried attester address.
+    /// @return settings  The attester's settings.
+    function getAttesterSettings(address attester) external view returns (AttesterSettings memory settings) {
+        return _attesterSettings[attester];
     }
 }

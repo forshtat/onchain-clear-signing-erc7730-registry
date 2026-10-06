@@ -3,39 +3,56 @@ pragma solidity ^0.8.24;
 
 import "../structs/RegistrationRecord.sol";
 
+import "../IRecordsModule.sol";
 import "./MirrorListManager.sol";
 
-contract RecordsModule is MirrorListManager {
+contract RecordsModule is MirrorListManager, IRecordsModule {
 
     /// @notice The record currently active for the given attester and context.
     /// @notice The ClearSigningRegistry does not enforce or prioritize any attestation formats.
     mapping(address attester => mapping(bytes32 contextKeyId => RegistrationRecord)) internal _records;
 
-    /// @notice Writes the caller's record for every listed context, replacing any previous record there.
-    /// @param contextKeyIds  One array of context IDs per record: 'registrationRecords[i]' is written for every ID in 'contextKeyIds[i]'.
+    /// @notice Write the caller's registration records, each for one or more contexts.
+    ///
+    ///         The attester produces the signed attestation artifacts locally and stores them off-chain.
+    ///         Every record SHOULD reference at least one standard ERC-8176 EAS off-chain attestation.
+    ///         The registry itself is attestation-agnostic and does not validate any attestation's
+    ///         signature or content, nor the declared descriptor hash.
+    ///
+    ///         Each attester has at most one record per context. Writing a record replaces the
+    ///         previous one at that context, for every descriptor schema MAJOR it declared.
+    ///         To stop serving a record without a replacement, see 'deleteRecords'.
+    ///
+    ///         Both MirrorLists referenced by a record must already be published, see 'publishMirrorLists'.
+    ///
+    /// @param contextKeyIds        One array of context IDs per record: 'registrationRecords[i]'
+    ///                             is written for every ID in 'contextKeyIds[i]'.
+    /// @param registrationRecords  The records to write. Must be the same length as 'contextKeyIds'.
     function writeRecords(
         bytes32[][] calldata contextKeyIds,
         RegistrationRecord[] calldata registrationRecords
     ) external {
         if (registrationRecords.length == 0) {
-            revert IClearSigningRegistry.EmptyRecords();
+            revert EmptyRecords();
         }
         if (contextKeyIds.length != registrationRecords.length) {
-            revert IClearSigningRegistry.ArrayLengthMismatch();
+            revert ArrayLengthMismatch();
         }
         for (uint256 i = 0; i < registrationRecords.length; i++) {
             _processRegistrationRecord(contextKeyIds[i], registrationRecords[i]);
         }
     }
 
-    /// @notice Deletes the caller's record at every listed context. A context without a record is skipped silently.
+    /// @notice Delete the caller's record at every listed context.
+    ///         A context without a record is skipped silently, and still emits 'RecordDeleted'.
+    /// @param contextKeyIds  The context IDs whose records are deleted. Must not be empty.
     function deleteRecords(bytes32[] calldata contextKeyIds) external {
         if (contextKeyIds.length == 0) {
-            revert IClearSigningRegistry.EmptyContextKeyIds();
+            revert EmptyContextKeyIds();
         }
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
             delete _records[msg.sender][contextKeyIds[i]];
-            emit IClearSigningRegistry.RecordDeleted(msg.sender, contextKeyIds[i]);
+            emit RecordDeleted(msg.sender, contextKeyIds[i]);
         }
     }
 
@@ -45,13 +62,13 @@ contract RecordsModule is MirrorListManager {
         RegistrationRecord calldata registrationRecord
     ) private {
         if (contextKeyIds.length == 0) {
-            revert IClearSigningRegistry.EmptyContextKeyIds();
+            revert EmptyContextKeyIds();
         }
         if (registrationRecord.descriptorDetails.descriptorHash == bytes32(0)) {
-            revert IClearSigningRegistry.ZeroDescriptorHash();
+            revert ZeroDescriptorHash();
         }
         if (registrationRecord.descriptorDetails.descriptorSchemaMajors.length == 0) {
-            revert IClearSigningRegistry.EmptyDescriptorSchemaMajors();
+            revert EmptyDescriptorSchemaMajors();
         }
         // Both MirrorLists must already be published using the 'publishMirrorLists' function
         _requireMirrorListPublished(registrationRecord.descriptorDetails.mirrorListId);
@@ -59,7 +76,7 @@ contract RecordsModule is MirrorListManager {
 
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
             _records[msg.sender][contextKeyIds[i]] = registrationRecord;
-            emit IClearSigningRegistry.RecordWritten(msg.sender, contextKeyIds[i], registrationRecord);
+            emit RecordWritten(msg.sender, contextKeyIds[i], registrationRecord);
         }
     }
 }

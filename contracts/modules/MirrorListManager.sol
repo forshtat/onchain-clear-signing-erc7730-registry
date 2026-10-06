@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
-import "../IClearSigningRegistry.sol";
+import "../IMirrorListManager.sol";
 
-contract MirrorListManager {
+contract MirrorListManager is IMirrorListManager {
     /// @notice Global store of MirrorLists, each a list of URLs leading to the same off-chain contents.
     /// @notice Written once per unique URL list, so attesters can share common data between records.
     mapping(bytes32 mirrorListId => string[] urls) internal _mirrorLists;
 
-    /// @inheritdoc IClearSigningRegistry
-    function getMirrorListById(bytes32 mirrorListId) external view returns (string[] memory) {
+    /// @notice Return the URI list for a given MirrorList ID, or an empty array if it was never published.
+    /// @param mirrorListId  The MirrorList content hash.
+    /// @return uris  The full URI list.
+    function getMirrorListById(bytes32 mirrorListId) external view returns (string[] memory uris) {
         return _mirrorLists[mirrorListId];
     }
 
-    /// @inheritdoc IClearSigningRegistry
+    /// @notice Publish a batch of MirrorLists on-chain.
+    /// @param uriLists  The URI lists to publish. No list may be empty.
     function publishMirrorLists(string[][] calldata uriLists) external {
         for (uint256 i = 0; i < uriLists.length; i++) {
             _publishMirrorList(uriLists[i]);
@@ -24,7 +27,7 @@ contract MirrorListManager {
     ///      content is stored exactly once and emits no event on repeated publication.
     function _publishMirrorList(string[] calldata uris) private {
         if (uris.length == 0) {
-            revert IClearSigningRegistry.EmptyMirrorList();
+            revert EmptyMirrorList();
         }
         bytes32 mirrorListId = keccak256(abi.encode(uris));
         string[] storage storedUris = _mirrorLists[mirrorListId];
@@ -34,14 +37,14 @@ contract MirrorListManager {
             for (uint256 i = 0; i < uris.length; i++) {
                 storedUris.push(uris[i]);
             }
-            emit IClearSigningRegistry.MirrorListPublished(mirrorListId, uris);
+            emit MirrorListPublished(mirrorListId, uris);
         }
     }
 
     /// @dev Reverts with 'UnknownMirrorList' unless 'mirrorListId' was already published.
     function _requireMirrorListPublished(bytes32 mirrorListId) internal view {
         if (_mirrorLists[mirrorListId].length == 0) {
-            revert IClearSigningRegistry.UnknownMirrorList(mirrorListId);
+            revert UnknownMirrorList(mirrorListId);
         }
     }
 }
