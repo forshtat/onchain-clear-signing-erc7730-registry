@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
+import "../libs/MirrorListLib.sol";
 import "../structs/MirrorList.sol";
 
+import "../IClearSigningRegistry.sol";
+
+
 contract MirrorListManager {
+    using MirrorListLib for mapping(bytes32 mirrorListId => MirrorList);
 
     /// @notice Global store of MirrorLists regardless of the contents type.
     /// @notice Mirror lists allow sharing common off-chain data with identifier written once per unique URI set.
@@ -40,5 +45,10 @@ contract MirrorListManager {
             }
             emit MirrorListPublished(mirrorListId, uris);
         }
+    }
+
+    /// @dev Reverts with 'UnknownMirrorList' unless 'mirrorListId' was already published.
+    function _requireMirrorListPublished(bytes32 mirrorListId) private view {
+        require(_mirrorLists.includes(mirrorListId), UnknownMirrorList(mirrorListId));
     }
 }
