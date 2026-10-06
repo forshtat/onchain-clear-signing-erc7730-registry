@@ -1,12 +1,23 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
-import "./structs/MirrorList.sol";
+import "./structs/RegistrationRecord.sol";
 
 /// @title  IClearSigningRegistry — On-Chain Registry for ERC-7730 Clear Signing Descriptors
 /// @notice Defines the interface for an Ethereum registry that maps ERC-7730 binding context IDs
 ///         to attester-attested descriptors backed by an arbitrary off-chain attestation mechanism.
 interface IClearSigningRegistry {
+
+    /// @notice Emitted when an attester deletes the record for a context.
+    /// @param attester       The attester whose record was deleted.
+    /// @param contextKeyId   The context ID affected.
+    event RecordDeleted(address indexed attester, bytes32 indexed contextKeyId);
+
+    /// @notice Emitted when an attester writes the record for a context, replacing any previous one.
+    /// @param attester       The attester whose record was set.
+    /// @param contextKeyId   The context ID affected.
+    /// @param record         The newly active record.
+    event RecordWritten(address indexed attester, bytes32 indexed contextKeyId, RegistrationRecord record);
 
     /// @notice Emitted when an attester's active attestation set for a context ID changes.
     /// @param attester                  The attester whose active attestation set changed.
@@ -22,20 +33,6 @@ interface IClearSigningRegistry {
         bytes32         previousAttestationSetId,
         bytes32         descriptorHash,
         uint256         descriptorSchemaMajor
-    );
-
-    /// @notice Emitted whenever an attester revokes a descriptor at a context. Revoking the same
-    ///         pair again emits again, with the later timestamp (audit trail only — revocation
-    ///         has no un-revoke, so the timestamp is never consulted for ordering).
-    /// @param attester       The attester the revocation is recorded under.
-    /// @param contextKeyId   The context key ID of the revoked descriptor.
-    /// @param descriptorHash The revoked content's ERC-8176 descriptor hash.
-    /// @param timestamp      The block timestamp at which the revocation was recorded.
-    event DescriptorRevoked(
-        address indexed attester,
-        bytes32 indexed contextKeyId,
-        bytes32         descriptorHash,
-        uint64          timestamp
     );
 
     /// @notice Emitted exactly once per attestation set when its write-once metadata is stored during registration.
@@ -89,8 +86,17 @@ interface IClearSigningRegistry {
     /// @param profileURI  The new profile document URI.
     event AttesterProfileUpdated(address indexed attester, string profileURI);
 
-    /// @notice Thrown when descriptors is empty.
-    error EmptyDescriptors();
+    /// @notice Thrown when no registration records are passed.
+    error EmptyRecords();
+
+    /// @notice Thrown when 'contextKeyIds' and 'registrationRecords' differ in length.
+    error ArrayLengthMismatch();
+
+    /// @notice Thrown when a record declares no descriptor schema MAJOR versions.
+    error EmptyDescriptorSchemaMajors();
+
+    /// @notice Thrown when a record declares no attestation format IDs.
+    error EmptyAttestationFormatIds();
 
     /// @notice Thrown when an empty key array is passed to an update function.
     error EmptyKeys();
@@ -116,9 +122,6 @@ interface IClearSigningRegistry {
     /// @notice Thrown when a descriptor's attestationIds is empty.
     error EmptyAttestationIds();
 
-    /// @notice Thrown when 'revokeDescriptors' is called with an empty 'revocations' array.
-    error EmptyRevocations();
-
     /// @notice Thrown when a registration reuses an attestation set ID whose stored record
     ///         does not match the incoming descriptor.
     error AttestationIdAlreadyUsed(bytes32 attestationId);
@@ -134,8 +137,7 @@ interface IClearSigningRegistry {
     /// @notice Thrown when an empty URI list is passed to publishMirrorLists.
     error EmptyMirrorList();
 
-    /// @notice Thrown when a MirrorList id passed to 'createAttestations',
-    ///         'updateDescriptorMirrorList', or 'updateAttestationMirrorList' was
+    /// @notice Thrown when a MirrorList id passed to 'writeRecords' was
     ///         never published via 'publishMirrorLists'.
     error UnknownMirrorList(bytes32 mirrorListId);
 
@@ -144,92 +146,35 @@ interface IClearSigningRegistry {
     ///         not verify against the attester.
     error InvalidRegistrationSignature();
 
-    /// @notice Thrown when 'createAttestations' would activate a descriptor hash that was
-    ///         already revoked at the given context — whether by an explicit 'revokeDescriptors'
-    ///         call or by auto-revocation when an earlier registration displaced it. A revoked
-    ///         hash can never become active at that context again.
-    error RevokedDescriptorReused(bytes32 contextKeyId, bytes32 descriptorHash);
-
-    /// @notice Register a batch of descriptors backed by attestations.
+    /// @notice Write the caller's registration records, each for one or more contexts.
     ///
     ///         The attester produces the signed attestation artifacts locally and stores them off-chain.
-    ///         All attestations of a descriptor form one attestation set whose members are active together.
-    ///         Every set SHOULD contain a standard ERC-8176 EAS off-chain attestation.
-    ///         The registry itself is attestation-agnostic — each attestation carries a vendor format ID.
+    ///         Every record SHOULD reference at least one standard ERC-8176 EAS off-chain attestation.
+    ///         The registry itself is attestation-agnostic and does not validate any attestation's
+    ///         signature or content, nor the declared descriptor hash.
     ///
-    ///         The registry does not validate any attestation's signature or content.
+    ///         Each attester has at most one record per context. Writing a record replaces the
+    ///         previous one at that context, for every descriptor schema MAJOR it declared.
+    ///         To stop serving a record without a replacement, see 'deleteRecords'.
     ///
-    ///         The registry derives an attestation set ID per descriptor.
-    ///         A set with a single attestation uses that attestation's own ID directly.
-    ///         A larger set uses 'keccak256(abi.encode(descriptorHash, descriptorSchemaMajor, attestationIds))'.
+    ///         Both MirrorLists referenced by a record must already be published, see 'publishMirrorLists'.
     ///
-    ///         Replacing an active '(contextKeyId, descriptorSchemaMajor)' record needs no prior
-    ///         revocation: displacing it auto-revokes the descriptorHash it displaces, at that
-    ///         context, atomically with this call — see 'RevokedDescriptorReused'. This only
-    ///         covers the registered descriptorHash itself; content nested inside it and
-    ///         invisible to the registry (e.g. one function's descriptor inside a function index)
-    ///         is not auto-revoked when only that nested content changes — it stays valid
-    ///         until the attester separately revokes its own exact 'descriptorHash' with
-    ///         'revokeDescriptors'.
-    ///
-    /// @param attester       The address of the attester registering the descriptors.
-    /// @param descriptors    The descriptors to register, each carrying its attestation set.
-    ///                       Active attestation sets are stored per '(contextKeyId, descriptorSchemaMajor)' keys.
-    ///                       Descriptors of different schema MAJOR values never displace each other.
-    ///                       Each '(contextKeyId, descriptorSchemaMajor)' active record may be written at most once per batch.
-    ///
-    /// @param descriptorMirrorListId  The id of an already-published MirrorList — see
-    ///                       'publishMirrorLists' — for the index file containing all
-    ///                       specified descriptors. Reverts with 'UnknownMirrorList' if unpublished.
-    ///
-    /// @param attestationMirrorListId The id of an already-published MirrorList for the
-    ///                       index file containing all specified attestations. Reverts
-    ///                       with 'UnknownMirrorList' if unpublished.
-    ///
-    /// @param signature      EIP-712 signature by the attester authorizing this batch.
-    ///                       Required when the registration transaction is relayed.
-    ///
-    function createAttestations(
-        address           attester,
-        DescriptorInfo[]  calldata descriptors,
-        bytes32           descriptorMirrorListId,
-        bytes32           attestationMirrorListId,
-        bytes             calldata signature
+    /// @param contextKeyIds        One array of context IDs per record: 'registrationRecords[i]'
+    ///                             is written for every ID in 'contextKeyIds[i]'.
+    /// @param registrationRecords  The records to write. Must be the same length as 'contextKeyIds'.
+    function writeRecords(
+        bytes32[][] calldata contextKeyIds,
+        RegistrationRecord[] calldata registrationRecords
     ) external;
+
+    /// @notice Delete the caller's record at every listed context.
+    ///         A context without a record is skipped silently, and still emits 'RecordDeleted'.
+    /// @param contextKeyIds  The context IDs whose records are deleted. Must not be empty.
+    function deleteRecords(bytes32[] calldata contextKeyIds) external;
 
     /// @notice Publish a batch of MirrorLists on-chain.
     /// @param uriLists  The URI lists to publish. No list may be empty.
     function publishMirrorLists(string[][] calldata uriLists) external;
-
-    /// @notice Revokes descriptors at contexts under the specified 'attester'. Each entry states that
-    ///         this exact descriptor content is no longer correct at this context. A revoked
-    ///         'descriptorHash' is void forever at that context — there is no un-revoke. Content
-    ///         that was never revoked needs nothing special to stay valid; a correction naturally
-    ///         produces a different 'descriptorHash', so it is never affected by this call.
-    ///
-    ///         Works uniformly for a whole-contract descriptor, a function index, or a single-function
-    ///         descriptor — the registry only ever sees an opaque content hash.
-    ///
-    ///         The registry does not check that the descriptor was ever attested or registered.
-    ///
-    /// @param attester     The attester whose descriptors are being revoked.
-    /// @param revocations  The '(contextKeyId, descriptorHash)' pairs to revoke.
-    /// @param signature    EIP-712 signature by the attester authorizing this batch.
-    ///                     Required when the revocation transaction is relayed.
-    function revokeDescriptors(
-        address              attester,
-        DescriptorRevocation[] calldata revocations,
-        bytes                calldata signature
-    ) external;
-
-    /// @notice The timestamp at which 'attester' revoked 'descriptorHash' at 'contextKeyId', or 0 if never revoked.
-    ///
-    /// @param attester       The attester whose revocation is being checked.
-    /// @param contextKeyId   The context key ID the descriptor was found under.
-    /// @param descriptorHash The queried content's ERC-8176 descriptor hash.
-    /// @return timestamp  The revocation timestamp, or 0 if not revoked.
-    function getDescriptorRevocationTimestamp(address attester, bytes32 contextKeyId, bytes32 descriptorHash)
-        external view returns (uint64 timestamp);
 
     /// @notice Resolve all active attestation sets for the specified query with a filter.
     ///         The request fields are:
@@ -259,14 +204,12 @@ interface IClearSigningRegistry {
         string[]  calldata allowedPrefixes
     ) external view returns (ResolvedDescriptor[] memory resolved);
 
-    /// @notice Return the URI list for a given MirrorList ID.
+    /// @notice Return the URI list for a given MirrorList ID, or an empty array if it was never published.
     ///
-    /// @param mirrorListId     The MirrorList content hash.
-    /// @param allowedPrefixes  Raw string prefixes filtering the returned URIs, or empty array for no filters.
+    /// @param mirrorListId  The MirrorList content hash.
     ///
-    /// @return uris  The fully resolved URI list.
-    function getMirrorListById(bytes32 mirrorListId, string[] calldata allowedPrefixes)
-        external view returns (string[] memory uris);
+    /// @return uris  The full URI list.
+    function getMirrorListById(bytes32 mirrorListId) external view returns (string[] memory uris);
 
     /// @notice The next EIP-712 nonce for all relayed calls by the given attester.
     /// @param attester  The queried attester address.
@@ -306,20 +249,14 @@ interface IClearSigningRegistry {
         bytes calldata signature
     ) external;
 
-    /// @notice Set the attester's profile document URI — a self-declared "business card" pointing at its JSON profile.
+    /// @notice Set the caller's profile document URI — a self-declared "business card" pointing at its JSON profile.
     ///
     ///         The profile is display-only metadata and MUST NOT be used as trust input.
     ///         Wallets select and trust attesters by address ONLY.
     ///         Consumers SHOULD render profile data only for attesters they already trust.
     ///
-    /// @param attester    The attester whose profile is being set.
     /// @param profileURI  The new profile document URI.
-    /// @param signature   EIP-712 signature by the attester authorizing this update.
-    function setAttesterProfileURI(
-        address         attester,
-        string calldata profileURI,
-        bytes  calldata signature
-    ) external;
+    function setAttesterProfileURI(string calldata profileURI) external;
 
     /// @notice The attester's current profile document URI, or an empty string if unset.
     /// @param attester  The queried attester address.
