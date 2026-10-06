@@ -53,9 +53,6 @@ contract RecordsModule is MirrorListManager {
         if (registrationRecord.descriptorDetails.descriptorSchemaMajors.length == 0) {
             revert IClearSigningRegistry.EmptyDescriptorSchemaMajors();
         }
-        if (registrationRecord.attestationDetails.attestationFormatIds.length == 0) {
-            revert IClearSigningRegistry.EmptyAttestationFormatIds();
-        }
         // Both MirrorLists must already be published using the 'publishMirrorLists' function
         _requireMirrorListPublished(registrationRecord.descriptorDetails.mirrorListId);
         _requireMirrorListPublished(registrationRecord.attestationDetails.mirrorListId);

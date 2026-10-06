@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "./structs/RegistrationRecord.sol";
+import "./structs/ResolvedRecord.sol";
 
 /// @title  IClearSigningRegistry — On-Chain Registry for ERC-7730 Clear Signing Descriptors
 /// @notice Defines the interface for an Ethereum registry that maps ERC-7730 binding context IDs
@@ -86,6 +87,21 @@ interface IClearSigningRegistry {
     /// @param profileURI  The new profile document URI.
     event AttesterProfileUpdated(address indexed attester, string profileURI);
 
+    /// @notice Emitted when an attester changes its declared attestation formats.
+    /// @param attester              The attester whose declaration changed.
+    /// @param attestationFormatIds  The new declared format IDs, empty when cleared.
+    event AttestationFormatIdsUpdated(address indexed attester, bytes32[] attestationFormatIds);
+
+    /// @notice Emitted when an attester sets or clears its revocation controller for an attestation format.
+    /// @param attester             The attester whose controller changed.
+    /// @param attestationFormatId  The attestation format the controller applies to.
+    /// @param controller           The new controller address, or address(0) when cleared.
+    event RevocationControllerUpdated(
+        address indexed attester,
+        bytes32 indexed attestationFormatId,
+        address         controller
+    );
+
     /// @notice Thrown when no registration records are passed.
     error EmptyRecords();
 
@@ -94,9 +110,6 @@ interface IClearSigningRegistry {
 
     /// @notice Thrown when a record declares no descriptor schema MAJOR versions.
     error EmptyDescriptorSchemaMajors();
-
-    /// @notice Thrown when a record declares no attestation format IDs.
-    error EmptyAttestationFormatIds();
 
     /// @notice Thrown when an empty key array is passed to an update function.
     error EmptyKeys();
@@ -176,33 +189,20 @@ interface IClearSigningRegistry {
     /// @param uriLists  The URI lists to publish. No list may be empty.
     function publishMirrorLists(string[][] calldata uriLists) external;
 
-    /// @notice Resolve all active attestation sets for the specified query with a filter.
-    ///         The request fields are:
-    ///             1. The list of attesters trusted by the wallet.
-    ///             2. The list of potential context IDs matching the relevant signature request.
-    ///             3. The list of schema MAJOR versions supported by the wallet.
-    ///             4. The list of attestation format IDs the wallet can verify.
+    /// @notice Resolve the records of the given attesters at the given contexts.
     ///
-    /// The 'attesters', 'contextKeyIds' and 'descriptorSchemaMajors' parameters are lookup keys - an empty array yields no results.
-    /// An empty 'attestationFormatIds' or 'allowedPrefixes' array applies no filter for that parameter.
+    ///         Returns one entry per '(attester, contextKeyId)' pair that currently has a record, ordered by
+    ///         attester and then by context. Both parameters are lookup keys: an empty array yields no results.
     ///
-    /// A resolved descriptor is returned even if every one of its attestations is filtered out.
+    ///         The registry applies no filters. A wallet picks the schema MAJOR versions it supports from
+    ///         'descriptorSchemaMajors', and may use the attester's declared formats
+    ///         (see 'getAttestationFormatIds') and revocation controllers (see 'getRevocationController').
     ///
-    /// @param attesters        Queried attester addresses trusted by the wallet.
-    /// @param contextKeyIds       Candidate context IDs to look up.
-    /// @param descriptorSchemaMajors     The schema MAJOR versions supported by the wallet.
-    /// @param attestationFormatIds        Attestation format IDs to include, or empty array for all formats.
-    /// @param allowedPrefixes  Raw string prefixes filtering the returned URI lists.
-    ///                         e.g. ["ipfs:", "https:"].
-    ///                         A URI is returned only if it starts with at least one of the prefixes.
-    /// @return resolved   One 'ResolvedDescriptor' entry per active '(attester, contextKeyId, descriptorSchemaMajor)' record.
-    function resolveDescriptors(
-        address[] calldata attesters,
-        bytes32[] calldata contextKeyIds,
-        uint256[] calldata descriptorSchemaMajors,
-        bytes32[] calldata attestationFormatIds,
-        string[]  calldata allowedPrefixes
-    ) external view returns (ResolvedDescriptor[] memory resolved);
+    /// @param attesters      Attester addresses trusted by the wallet.
+    /// @param contextKeyIds  Candidate context IDs to look up.
+    /// @return resolved  The records found.
+    function resolveRecords(address[] calldata attesters, bytes32[] calldata contextKeyIds)
+        external view returns (ResolvedRecord[] memory resolved);
 
     /// @notice Return the URI list for a given MirrorList ID, or an empty array if it was never published.
     ///
@@ -262,4 +262,39 @@ interface IClearSigningRegistry {
     /// @param attester  The queried attester address.
     /// @return profileURI  The profile document URI.
     function getAttesterProfileURI(address attester) external view returns (string memory profileURI);
+
+    /// @notice Declare the attestation formats the caller uses consistently across all of its records,
+    ///         or clear the declaration with an empty array.
+    ///
+    ///         A declaration only: the registry does not check records against it. Wallets MAY use it to skip
+    ///         attesters that issue no format they can verify, and attesters that stray from their own
+    ///         declaration can simply be ignored by wallets. Like a revocation controller and unlike the
+    ///         profile, it is a functional hint, not display-only data.
+    ///
+    /// @param attestationFormatIds  The declared attestation format IDs.
+    function setAttestationFormatIds(bytes32[] calldata attestationFormatIds) external;
+
+    /// @notice The attester's declared attestation formats, or an empty array if none.
+    /// @param attester  The queried attester address.
+    /// @return attestationFormatIds  The declared attestation format IDs.
+    function getAttestationFormatIds(address attester) external view returns (bytes32[] memory attestationFormatIds);
+
+    /// @notice Declare the caller's revocation controller for an attestation format, or clear it with address(0).
+    ///
+    ///         A controller is an optional contract implementing 'IRevocationController' that wallets MAY ask
+    ///         whether an attestation of this format was revoked. The registry never calls it, does not
+    ///         interpret the attestation identifiers it accepts, and does not check that it is a contract.
+    ///         A controller is chosen by the attester, so wallets that use it extend the trust they already
+    ///         place in that attester and nothing more.
+    ///
+    /// @param attestationFormatId  The attestation format the controller applies to.
+    /// @param controller           The controller address, or address(0) to clear.
+    function setRevocationController(bytes32 attestationFormatId, address controller) external;
+
+    /// @notice The attester's revocation controller for an attestation format, or address(0) if none.
+    /// @param attester             The queried attester address.
+    /// @param attestationFormatId  The queried attestation format.
+    /// @return controller  The controller address.
+    function getRevocationController(address attester, bytes32 attestationFormatId)
+        external view returns (address controller);
 }
