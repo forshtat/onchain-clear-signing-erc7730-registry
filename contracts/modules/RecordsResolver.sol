@@ -3,12 +3,22 @@ pragma solidity ^0.8.24;
 
 import "../structs/ResolvedRecord.sol";
 
-import "../IClearSigningRegistry.sol";
 import "./RecordsModule.sol";
 
 contract RecordsResolver is RecordsModule {
 
-    /// @inheritdoc IClearSigningRegistry
+    /// @notice Resolve the records of the given attesters at the given contexts.
+    ///
+    ///         Returns one entry per '(attester, contextKeyId)' pair that currently has a record, ordered by
+    ///         attester and then by context. Both parameters are lookup keys: an empty array yields no results.
+    ///
+    ///         The registry applies no filters. A wallet picks the schema MAJOR versions it supports from
+    ///         'descriptorSchemaMajors', and may use the attester's declared formats and revocation
+    ///         controllers (see 'getAttesterSettings').
+    ///
+    /// @param attesters      Attester addresses trusted by the wallet.
+    /// @param contextKeyIds  Candidate context IDs to look up.
+    /// @return resolved  The records found.
     function resolveRecords(address[] calldata attesters, bytes32[] calldata contextKeyIds)
     external view returns (ResolvedRecord[] memory resolved)
     {
