@@ -5,6 +5,10 @@ pragma solidity 0.8.37;
 /// @notice An attester MAY declare, per attestation format, a contract wallets can ask whether a given
 ///         attestation was revoked. The registry never calls a controller and does not interpret
 ///         'data': its meaning is defined by the attestation format.
+///         Revocation is the attestation format's job. A format other than the EAS off-chain one
+///         must define what 'data' means and where revocation is answered. The controller is an
+///         optional hint. Without one, the attestation is unrevocable. Removing or replacing a record
+///         is not revocation.
 ///         The signature deliberately matches 'getRevokeOffchain' of the Ethereum Attestation Service,
 ///         so the canonical EAS contract itself is a valid controller for the EAS off-chain format.
 interface IRevocationController {
