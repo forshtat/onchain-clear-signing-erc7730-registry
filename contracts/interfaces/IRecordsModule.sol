@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity 0.8.37;
 
-import "./structs/RegistrationRecord.sol";
+import "../structs/RegistrationRecord.sol";
 
 /// @notice Events and errors of the attester records store.
 interface IRecordsModule {

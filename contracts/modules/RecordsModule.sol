@@ -3,7 +3,7 @@ pragma solidity 0.8.37;
 
 import "../structs/RegistrationRecord.sol";
 
-import "../IRecordsModule.sol";
+import "../interfaces/IRecordsModule.sol";
 import "./MirrorListManager.sol";
 
 contract RecordsModule is MirrorListManager, IRecordsModule {

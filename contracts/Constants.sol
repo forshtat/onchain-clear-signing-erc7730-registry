@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity 0.8.37;
 
-/// @title  ClearSigningRegistryConstants — Namespacing tags and EIP-712 typehashes
+/// @title  Constants — Namespacing tags and attestation format IDs
 /// @notice Pure constant values with no state or logic, kept in their own file so
 ///         ClearSigningRegistry.sol stays focused on registry behavior. The context
 ///         tags and the attestation format ID are reference values for off-chain use
 ///         (wallets derive context IDs and format IDs locally per the formulas here)
 ///         and are never read by the registry.
-library ClearSigningRegistryConstants {
+library Constants {
     bytes32 internal constant CONTEXT_TAG_CONTRACT   = keccak256("erc7730.context.contract");
 
     bytes32 internal constant CONTEXT_TAG_FACTORY    = keccak256("erc7730.context.factory");

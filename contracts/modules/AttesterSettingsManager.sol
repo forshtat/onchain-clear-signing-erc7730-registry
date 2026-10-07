@@ -3,7 +3,7 @@ pragma solidity 0.8.37;
 
 import "../structs/AttesterSettings.sol";
 
-import "../IAttesterSettingsManager.sol";
+import "../interfaces/IAttesterSettingsManager.sol";
 
 contract AttesterSettingsManager is IAttesterSettingsManager {
     /// @notice The settings each attester declared. Empty if the attester never set any.

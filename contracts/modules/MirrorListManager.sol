@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity 0.8.37;
 
-import "../IMirrorListManager.sol";
+import "../interfaces/IMirrorListManager.sol";
 
 contract MirrorListManager is IMirrorListManager {
     /// @notice Global store of MirrorLists, each a list of URLs leading to the same off-chain contents.

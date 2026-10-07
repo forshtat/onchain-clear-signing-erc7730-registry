@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity 0.8.37;
 
-import "./structs/AttesterSettings.sol";
+import "../structs/AttesterSettings.sol";
 
 /// @notice Events of the attester settings store.
 interface IAttesterSettingsManager {
