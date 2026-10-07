@@ -11,6 +11,19 @@ interface IRecordsModule {
     /// @param record         The newly active record.
     event RecordWritten(address indexed attester, bytes32 indexed contextKeyId, RegistrationRecord record);
 
+    /// @notice Emitted right after 'RecordWritten', once per descriptor release of the written record,
+    ///         so a descriptor hash can be searched for by its topic.
+    /// @param attester        The attester whose record was written.
+    /// @param contextKeyId    The context ID affected.
+    /// @param descriptorHash  The descriptor hash of the release.
+    /// @param schemaMajor     The schema MAJOR version of the release.
+    event DescriptorReleased(
+        address indexed attester,
+        bytes32 indexed contextKeyId,
+        bytes32 indexed descriptorHash,
+        uint64          schemaMajor
+    );
+
     /// @notice Emitted when an attester deletes the record for a context.
     /// @param attester       The attester whose record was deleted.
     /// @param contextKeyId   The context ID affected.

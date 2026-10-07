@@ -65,7 +65,8 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         if (contextKeyIds.length == 0) {
             revert EmptyContextKeyIds();
         }
-        _requireValidReleases(registrationRecord.descriptorDetails.releases);
+        DescriptorRelease[] calldata releases = registrationRecord.descriptorDetails.releases;
+        _requireValidReleases(releases);
         // Both MirrorLists must already be published using the 'publishMirrorLists' function
         _requireMirrorListPublished(registrationRecord.descriptorDetails.mirrorListId);
         _requireMirrorListPublished(registrationRecord.attestationDetails.mirrorListId);
@@ -73,6 +74,9 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
             _records[msg.sender][contextKeyIds[i]] = registrationRecord;
             emit RecordWritten(msg.sender, contextKeyIds[i], registrationRecord);
+            for (uint256 j = 0; j < releases.length; j++) {
+                emit DescriptorReleased(msg.sender, contextKeyIds[i], releases[j].descriptorHash, releases[j].schemaMajor);
+            }
         }
     }
 

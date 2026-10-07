@@ -60,7 +60,8 @@ describe("ClearSigningRegistry", async function () {
       const record = recordOf("descriptor-1", [1n, 2n]);
 
       const txHash = await registry.write.writeRecords([[[contextA, contextB]], [record]]);
-      assert.equal(await logCount(txHash), 2);
+      // per context: one 'RecordWritten' plus one 'DescriptorReleased' per release
+      assert.equal(await logCount(txHash), 2 * (1 + 2));
 
       const resolved = await registry.read.resolveRecords([[attester], [contextA, contextUnset, contextB]]);
       assert.equal(resolved.length, 2);
@@ -80,6 +81,16 @@ describe("ClearSigningRegistry", async function () {
       const [resolved] = await registry.read.resolveRecords([[attester], [contextA]]);
       assert.deepEqual(resolved.releases.map((r) => r.schemaMajor), [1n, 3n]);
       assert.deepEqual(resolved.releases.map((r) => r.descriptorHash), [hashOf("multi-1"), hashOf("multi-3")]);
+    });
+
+    it("emits an indexed 'DescriptorReleased' per release so a descriptor hash can be searched", async function () {
+      const { registry, attester } = await deploy();
+      await registry.write.writeRecords([[[contextA, contextB]], [recordOf("search", [1n, 3n])]]);
+
+      const events = await registry.getEvents.DescriptorReleased({ descriptorHash: hashOf("search-3") });
+      assert.deepEqual(events.map((e) => e.args.contextKeyId), [contextA, contextB]);
+      assert.deepEqual(events.map((e) => e.args.schemaMajor), [3n, 3n]);
+      assert.equal(events[0].args.attester?.toLowerCase(), attester.toLowerCase());
     });
 
     it("replaces the previous record at a context", async function () {
