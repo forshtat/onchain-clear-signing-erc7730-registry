@@ -13,7 +13,6 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
     mapping(bytes32 recordId => RegistrationRecord) internal _recordsById;
 
     /// @notice The ID of the record currently active for the given attester and context, zero if none.
-    /// @notice The ClearSigningRegistry does not enforce or prioritize any attestation formats.
     mapping(address attester => mapping(bytes32 contextKeyId => bytes32 recordId)) internal _recordIds;
 
     /// @notice Write the caller's registration records, each for one or more contexts.
@@ -45,7 +44,7 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
     }
 
     /// @notice Delete the caller's record at every listed context.
-    ///         A context without a record is skipped silently, and still emits 'RecordDeleted'.
+    ///         A context without a record does not revert, and still emits 'RecordDeleted'.
     /// @param contextKeyIds  The context IDs whose records are deleted. Must not be empty.
     function deleteRecords(bytes32[] calldata contextKeyIds) external {
         require(contextKeyIds.length != 0, EmptyContextKeyIds());

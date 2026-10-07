@@ -27,6 +27,6 @@ library Constants {
     bytes32 internal constant ATTESTATION_FORMAT_EAS_OFFCHAIN = keccak256("erc7730.attestation.eas.offchain");
 
     /// Example vendor format for a post-quantum-signed attestation rendition (ML-DSA).
-    /// The format namespace is open-ended and the registry has no opinion on attestations actual contents or encoding.
+    /// The format namespace is open-ended and the registry has no opinion on attestations' actual contents or encoding.
     bytes32 internal constant ATTESTATION_FORMAT_ML_DSA = keccak256("erc7730.attestation.mldsa");
 }

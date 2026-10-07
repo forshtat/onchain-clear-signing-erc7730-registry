@@ -13,7 +13,7 @@ contract RecordsResolver is RecordsModule {
     ///         attester and then by context. Both parameters are lookup keys: an empty array yields no results.
     ///
     ///         The registry applies no filters. A wallet picks the schema MAJOR versions it supports from
-    ///         'descriptorSchemaMajors', and may use the attester's declared formats and revocation
+    ///         each record's 'releases', and may use the attester's declared formats and revocation
     ///         controllers (see 'getAttesterSettings').
     ///
     /// @param attesters      Attester addresses trusted by the wallet.

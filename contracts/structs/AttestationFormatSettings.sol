@@ -7,8 +7,8 @@ struct AttestationFormatSettings {
     bytes32 attestationFormatId;
     /// An optional contract implementing 'IRevocationController' that wallets MAY ask whether an attestation
     /// of this format was revoked, or address(0) for none, meaning attestations of this format are unrevocable.
-    /// For the EAS off-chain format this is the canonical
-    /// EAS contract, which wallets SHOULD query directly regardless of what is declared here.
+    /// For the EAS off-chain format this is the canonical EAS contract,
+    /// which wallets SHOULD query directly regardless of what is declared here.
     /// The registry never calls it, does not interpret the identifiers it accepts, and does not
     /// check that it is a contract. The controller is chosen by the attester, so wallets that use it extend
     /// the trust they already place in that attester and nothing more.
