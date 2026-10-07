@@ -33,12 +33,8 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         bytes32[][] calldata contextKeyIds,
         RegistrationRecord[] calldata registrationRecords
     ) external {
-        if (registrationRecords.length == 0) {
-            revert EmptyRecords();
-        }
-        if (contextKeyIds.length != registrationRecords.length) {
-            revert ArrayLengthMismatch();
-        }
+        require(registrationRecords.length != 0, EmptyRecords());
+        require(contextKeyIds.length == registrationRecords.length, ArrayLengthMismatch());
         for (uint256 i = 0; i < registrationRecords.length; i++) {
             _processRegistrationRecord(contextKeyIds[i], registrationRecords[i]);
         }
@@ -48,9 +44,7 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
     ///         A context without a record is skipped silently, and still emits 'RecordDeleted'.
     /// @param contextKeyIds  The context IDs whose records are deleted. Must not be empty.
     function deleteRecords(bytes32[] calldata contextKeyIds) external {
-        if (contextKeyIds.length == 0) {
-            revert EmptyContextKeyIds();
-        }
+        require(contextKeyIds.length != 0, EmptyContextKeyIds());
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
             delete _records[msg.sender][contextKeyIds[i]];
             emit RecordDeleted(msg.sender, contextKeyIds[i]);
@@ -62,9 +56,7 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         bytes32[] calldata contextKeyIds,
         RegistrationRecord calldata registrationRecord
     ) private {
-        if (contextKeyIds.length == 0) {
-            revert EmptyContextKeyIds();
-        }
+        require(contextKeyIds.length != 0, EmptyContextKeyIds());
         DescriptorRelease[] calldata releases = registrationRecord.descriptorDetails.releases;
         _requireValidReleases(releases);
         // Both MirrorLists must already be published using the 'publishMirrorLists' function
@@ -83,17 +75,11 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
     /// @dev Reverts unless there is at least one release, every release has a descriptor hash,
     ///      and the schema MAJOR versions are strictly ascending starting above zero.
     function _requireValidReleases(DescriptorRelease[] calldata releases) private pure {
-        if (releases.length == 0) {
-            revert EmptyReleases();
-        }
+        require(releases.length != 0, EmptyReleases());
         uint64 previousMajor;
         for (uint256 i = 0; i < releases.length; i++) {
-            if (releases[i].descriptorHash == bytes32(0)) {
-                revert ZeroDescriptorHash();
-            }
-            if (releases[i].schemaMajor <= previousMajor) {
-                revert SchemaMajorsNotAscending();
-            }
+            require(releases[i].descriptorHash != bytes32(0), ZeroDescriptorHash());
+            require(releases[i].schemaMajor > previousMajor, SchemaMajorsNotAscending());
             previousMajor = releases[i].schemaMajor;
         }
     }

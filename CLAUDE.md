@@ -30,3 +30,4 @@ Solidity 0.8.37 (pinned), `evmVersion: cancun`, `viaIR`, OpenZeppelin pinned to 
 - New files use `SPDX-License-Identifier: CC0-1.0`.
 - No relayed calls: every write is by `msg.sender` as the attester.
 - Loop indices are `i`, `j`; descriptive names are for real variables only.
+- Checks use `require(cond, CustomError())`, not `if (!cond) revert`; prefer plain assignment over copy loops (the toolchain supports it).

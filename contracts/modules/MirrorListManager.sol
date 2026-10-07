@@ -26,9 +26,7 @@ contract MirrorListManager is IMirrorListManager {
     /// @dev Stores 'uris' keyed by its content hash. Idempotent: a list with identical
     ///      content is stored exactly once and emits no event on repeated publication.
     function _publishMirrorList(string[] calldata uris) private {
-        if (uris.length == 0) {
-            revert EmptyMirrorList();
-        }
+        require(uris.length != 0, EmptyMirrorList());
         bytes32 mirrorListId = keccak256(abi.encode(uris));
         if (_mirrorLists[mirrorListId].length == 0) {
             _mirrorLists[mirrorListId] = uris;
@@ -38,8 +36,6 @@ contract MirrorListManager is IMirrorListManager {
 
     /// @dev Reverts with 'UnknownMirrorList' unless 'mirrorListId' was already published.
     function _requireMirrorListPublished(bytes32 mirrorListId) internal view {
-        if (_mirrorLists[mirrorListId].length == 0) {
-            revert UnknownMirrorList(mirrorListId);
-        }
+        require(_mirrorLists[mirrorListId].length != 0, UnknownMirrorList(mirrorListId));
     }
 }

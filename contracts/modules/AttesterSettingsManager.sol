@@ -18,12 +18,7 @@ contract AttesterSettingsManager is IAttesterSettingsManager {
     ///
     /// @param settings  The new settings. Replaces all previous settings, empty fields clear them.
     function updateAttesterSettings(AttesterSettings calldata settings) external {
-        AttesterSettings storage stored = _attesterSettings[msg.sender];
-        stored.profileURI = settings.profileURI;
-        delete stored.attestationFormats;
-        for (uint256 i = 0; i < settings.attestationFormats.length; i++) {
-            stored.attestationFormats.push(settings.attestationFormats[i]);
-        }
+        _attesterSettings[msg.sender] = settings;
         emit AttesterSettingsUpdated(msg.sender, settings);
     }
 
