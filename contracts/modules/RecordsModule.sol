@@ -8,9 +8,13 @@ import "./MirrorListManager.sol";
 
 contract RecordsModule is MirrorListManager, IRecordsModule {
 
-    /// @notice The record currently active for the given attester and context.
+    /// @notice Records, stored once under the hash of their ABI-encoded content and shared by
+    ///         every context that points to them. Never deleted: a record is immutable content.
+    mapping(bytes32 recordId => RegistrationRecord) internal _recordsById;
+
+    /// @notice The ID of the record currently active for the given attester and context, zero if none.
     /// @notice The ClearSigningRegistry does not enforce or prioritize any attestation formats.
-    mapping(address attester => mapping(bytes32 contextKeyId => RegistrationRecord)) internal _records;
+    mapping(address attester => mapping(bytes32 contextKeyId => bytes32 recordId)) internal _recordIds;
 
     /// @notice Write the caller's registration records, each for one or more contexts.
     ///
@@ -46,7 +50,7 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
     function deleteRecords(bytes32[] calldata contextKeyIds) external {
         require(contextKeyIds.length != 0, EmptyContextKeyIds());
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
-            delete _records[msg.sender][contextKeyIds[i]];
+            delete _recordIds[msg.sender][contextKeyIds[i]];
             emit RecordDeleted(msg.sender, contextKeyIds[i]);
         }
     }
@@ -63,8 +67,11 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         _requireMirrorListPublished(registrationRecord.descriptorDetails.mirrorListId);
         _requireMirrorListPublished(registrationRecord.attestationDetails.mirrorListId);
 
+        bytes32 recordId = keccak256(abi.encode(registrationRecord));
+        _recordsById[recordId] = registrationRecord;
+
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
-            _records[msg.sender][contextKeyIds[i]] = registrationRecord;
+            _recordIds[msg.sender][contextKeyIds[i]] = recordId;
             emit RecordWritten(msg.sender, contextKeyIds[i], registrationRecord);
             for (uint256 j = 0; j < releases.length; j++) {
                 emit DescriptorReleased(msg.sender, contextKeyIds[i], releases[j].descriptorHash, releases[j].schemaMajor);

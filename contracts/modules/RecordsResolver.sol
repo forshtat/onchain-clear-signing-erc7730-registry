@@ -42,14 +42,14 @@ contract RecordsResolver is RecordsModule {
         }
     }
 
-    /// @dev A record is active when it has at least one release: written records always do, deleted or never-written ones do not.
+    /// @dev A context has an active record when its pointer is set: written contexts always have one, deleted or never-written ones do not.
     function _isActive(address attester, bytes32 contextKeyId) private view returns (bool) {
-        return _records[attester][contextKeyId].descriptorDetails.releases.length != 0;
+        return _recordIds[attester][contextKeyId] != bytes32(0);
     }
 
     /// @dev Reads one active record and resolves its MirrorList IDs to URLs.
     function _resolveRecord(address attester, bytes32 contextKeyId) private view returns (ResolvedRecord memory) {
-        RegistrationRecord storage record = _records[attester][contextKeyId];
+        RegistrationRecord storage record = _recordsById[_recordIds[attester][contextKeyId]];
         return ResolvedRecord({
             attester: attester,
             contextKeyId: contextKeyId,

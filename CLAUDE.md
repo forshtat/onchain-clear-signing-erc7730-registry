@@ -21,6 +21,7 @@ Solidity 0.8.37 (pinned), `evmVersion: cancun`, `viaIR`, OpenZeppelin pinned to 
 
 - `ClearSigningRegistry.sol` — thin composition of the modules.
 - `modules/` — one contract per concern; each carries its own NatSpec. No registry-wide interface.
+  Records are stored once under their content hash; each (attester, context) holds a one-slot pointer to one.
 - `I<Module>.sol` — events and errors only, inherited by the matching module.
 - `IRevocationController.sol` — the one real interface: an optional attester-declared contract wallets may query. The registry never calls it.
 - `structs/` — one file per struct.

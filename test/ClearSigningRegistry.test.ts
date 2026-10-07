@@ -93,6 +93,26 @@ describe("ClearSigningRegistry", async function () {
       assert.equal(events[0].args.attester?.toLowerCase(), attester.toLowerCase());
     });
 
+    it("keeps contexts that share a record independent when one is overwritten or deleted", async function () {
+      const { registry, attester } = await deploy();
+      await registry.write.writeRecords([[[contextA, contextB]], [recordOf("shared")]]);
+
+      await registry.write.writeRecords([[[contextA]], [recordOf("other", [2n])]]);
+      const afterOverwrite = await registry.read.resolveRecords([[attester], [contextA, contextB]]);
+      assert.deepEqual(afterOverwrite.map((r) => r.releases), [
+        recordOf("other", [2n]).descriptorDetails.releases,
+        recordOf("shared").descriptorDetails.releases,
+      ]);
+
+      await registry.write.deleteRecords([[contextB]]);
+      const afterDelete = await registry.read.resolveRecords([[attester], [contextA, contextB]]);
+      assert.deepEqual(afterDelete.map((r) => r.contextKeyId), [contextA]);
+
+      await registry.write.writeRecords([[[contextB]], [recordOf("shared")]]);
+      const [restored] = await registry.read.resolveRecords([[attester], [contextB]]);
+      assert.deepEqual(restored.releases, recordOf("shared").descriptorDetails.releases);
+    });
+
     it("replaces the previous record at a context", async function () {
       const { registry, attester } = await deploy();
       await registry.write.writeRecords([[[contextA]], [recordOf("old", [1n, 2n, 3n])]]);
