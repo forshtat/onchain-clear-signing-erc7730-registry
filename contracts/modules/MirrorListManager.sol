@@ -30,13 +30,8 @@ contract MirrorListManager is IMirrorListManager {
             revert EmptyMirrorList();
         }
         bytes32 mirrorListId = keccak256(abi.encode(uris));
-        string[] storage storedUris = _mirrorLists[mirrorListId];
-        if (storedUris.length == 0) {
-            // Element-by-element copy: a whole-array 'storedUris = uris' assignment of
-            // nested calldata arrays is only supported by the IR pipeline ('via-ir').
-            for (uint256 i = 0; i < uris.length; i++) {
-                storedUris.push(uris[i]);
-            }
+        if (_mirrorLists[mirrorListId].length == 0) {
+            _mirrorLists[mirrorListId] = uris;
             emit MirrorListPublished(mirrorListId, uris);
         }
     }

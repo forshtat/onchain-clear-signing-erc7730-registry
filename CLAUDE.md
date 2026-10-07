@@ -15,7 +15,7 @@ npm test
 npx hardhat test test/<file>.ts
 ```
 
-Solidity 0.8.37 (pinned), `evmVersion: cancun`, OpenZeppelin pinned to 5.0.2.
+Solidity 0.8.37 (pinned), `evmVersion: cancun`, `viaIR`, OpenZeppelin pinned to 5.0.2.
 
 ## Layout (`contracts/`)
 
