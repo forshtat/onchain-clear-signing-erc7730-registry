@@ -16,6 +16,12 @@ contract MirrorListManager is IMirrorListManager {
     }
 
     /// @notice Publish a batch of MirrorLists on-chain.
+    ///
+    ///         MirrorLists are immutable and are stored permanently for every record.
+    ///         Changing the URL requires rewriting every record that uses it.
+    ///         If the location of the contents may need to change, point to a stable URL that can
+    ///         redirect to a correct location using compatible network protocol.
+    ///
     /// @param uriLists  The URI lists to publish. No list may be empty.
     function publishMirrorLists(string[][] calldata uriLists) external {
         for (uint256 i = 0; i < uriLists.length; i++) {
