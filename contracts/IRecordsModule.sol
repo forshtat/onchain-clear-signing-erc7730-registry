@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.37;
 
 import "./structs/RegistrationRecord.sol";
 
@@ -25,9 +25,12 @@ interface IRecordsModule {
     /// @notice Thrown when a record or a deletion lists no context IDs.
     error EmptyContextKeyIds();
 
-    /// @notice Thrown when a record declares a zero descriptor hash.
+    /// @notice Thrown when a release declares a zero descriptor hash.
     error ZeroDescriptorHash();
 
-    /// @notice Thrown when a record declares no descriptor schema MAJOR versions.
-    error EmptyDescriptorSchemaMajors();
+    /// @notice Thrown when a record declares no descriptor releases.
+    error EmptyReleases();
+
+    /// @notice Thrown when the releases' schema MAJOR versions are not strictly ascending from a value above zero.
+    error SchemaMajorsNotAscending();
 }

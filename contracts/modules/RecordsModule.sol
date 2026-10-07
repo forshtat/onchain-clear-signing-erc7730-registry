@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.37;
 
 import "../structs/RegistrationRecord.sol";
 
@@ -20,7 +20,8 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
     ///         signature or content, nor the declared descriptor hash.
     ///
     ///         Each attester has at most one record per context. Writing a record replaces the
-    ///         previous one at that context, for every descriptor schema MAJOR it declared.
+    ///         previous one at that context as a whole, including every descriptor release it held:
+    ///         to update one schema MAJOR, resend the other releases too, or they stop being served.
     ///         To stop serving a record without a replacement, see 'deleteRecords'.
     ///
     ///         Both MirrorLists referenced by a record must already be published, see 'publishMirrorLists'.
@@ -64,12 +65,7 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         if (contextKeyIds.length == 0) {
             revert EmptyContextKeyIds();
         }
-        if (registrationRecord.descriptorDetails.descriptorHash == bytes32(0)) {
-            revert ZeroDescriptorHash();
-        }
-        if (registrationRecord.descriptorDetails.descriptorSchemaMajors.length == 0) {
-            revert EmptyDescriptorSchemaMajors();
-        }
+        _requireValidReleases(registrationRecord.descriptorDetails.releases);
         // Both MirrorLists must already be published using the 'publishMirrorLists' function
         _requireMirrorListPublished(registrationRecord.descriptorDetails.mirrorListId);
         _requireMirrorListPublished(registrationRecord.attestationDetails.mirrorListId);
@@ -77,6 +73,24 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
             _records[msg.sender][contextKeyIds[i]] = registrationRecord;
             emit RecordWritten(msg.sender, contextKeyIds[i], registrationRecord);
+        }
+    }
+
+    /// @dev Reverts unless there is at least one release, every release has a descriptor hash,
+    ///      and the schema MAJOR versions are strictly ascending starting above zero.
+    function _requireValidReleases(DescriptorRelease[] calldata releases) private pure {
+        if (releases.length == 0) {
+            revert EmptyReleases();
+        }
+        uint64 previousMajor;
+        for (uint256 i = 0; i < releases.length; i++) {
+            if (releases[i].descriptorHash == bytes32(0)) {
+                revert ZeroDescriptorHash();
+            }
+            if (releases[i].schemaMajor <= previousMajor) {
+                revert SchemaMajorsNotAscending();
+            }
+            previousMajor = releases[i].schemaMajor;
         }
     }
 }

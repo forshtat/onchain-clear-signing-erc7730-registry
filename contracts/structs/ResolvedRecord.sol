@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.37;
+
+import "./DescriptorRelease.sol";
 
 /// @notice An attester's active record at a context, with its MirrorLists resolved to URLs.
 struct ResolvedRecord {
@@ -7,10 +9,8 @@ struct ResolvedRecord {
     address attester;
     /// The context ID the record was resolved for.
     bytes32 contextKeyId;
-    /// The declared canonical hash of the descriptor root index file.
-    bytes32 descriptorHash;
-    /// All declared schema MAJOR versions of the descriptors in the root index.
-    uint256[] descriptorSchemaMajors;
+    /// The descriptor releases of the record, one per supported schema MAJOR version, ordered by ascending 'schemaMajor'.
+    DescriptorRelease[] releases;
     /// The URLs of the descriptor root index file.
     string[] descriptorUrls;
     /// The URLs of the attestations root index file.

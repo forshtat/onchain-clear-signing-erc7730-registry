@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.37;
 
 import "../structs/ResolvedRecord.sol";
 
@@ -42,9 +42,9 @@ contract RecordsResolver is RecordsModule {
         }
     }
 
-    /// @dev A record is active when its descriptor hash is set: written records always have one, deleted or never-written ones do not.
+    /// @dev A record is active when it has at least one release: written records always do, deleted or never-written ones do not.
     function _isActive(address attester, bytes32 contextKeyId) private view returns (bool) {
-        return _records[attester][contextKeyId].descriptorDetails.descriptorHash != bytes32(0);
+        return _records[attester][contextKeyId].descriptorDetails.releases.length != 0;
     }
 
     /// @dev Reads one active record and resolves its MirrorList IDs to URLs.
@@ -53,8 +53,7 @@ contract RecordsResolver is RecordsModule {
         return ResolvedRecord({
             attester: attester,
             contextKeyId: contextKeyId,
-            descriptorHash: record.descriptorDetails.descriptorHash,
-            descriptorSchemaMajors: record.descriptorDetails.descriptorSchemaMajors,
+            releases: record.descriptorDetails.releases,
             descriptorUrls: _mirrorLists[record.descriptorDetails.mirrorListId],
             attestationUrls: _mirrorLists[record.attestationDetails.mirrorListId]
         });

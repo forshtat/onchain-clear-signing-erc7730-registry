@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.37;
 
 /// @title  ClearSigningRegistryConstants — Namespacing tags and EIP-712 typehashes
 /// @notice Pure constant values with no state or logic, kept in their own file so

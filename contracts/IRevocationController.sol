@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+pragma solidity 0.8.37;
 
 /// @title  IRevocationController — optional third-party revocation root for attestations
 /// @notice An attester MAY declare, per attestation format, a contract wallets can ask whether a given

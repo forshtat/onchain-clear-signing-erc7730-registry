@@ -20,7 +20,10 @@ describe("ClearSigningRegistry", async function () {
   const attestationMirrorListId = mirrorListIdOf(attestationUris);
 
   const recordOf = (label: string, majors: bigint[] = [1n]) => ({
-    descriptorDetails: { descriptorHash: hashOf(label), descriptorSchemaMajors: majors, mirrorListId: descriptorMirrorListId },
+    descriptorDetails: {
+      releases: majors.map((major) => ({ descriptorHash: hashOf(`${label}-${major}`), schemaMajor: major })),
+      mirrorListId: descriptorMirrorListId,
+    },
     attestationDetails: { mirrorListId: attestationMirrorListId },
   });
 
@@ -64,11 +67,19 @@ describe("ClearSigningRegistry", async function () {
       assert.deepEqual(resolved.map((r) => r.contextKeyId), [contextA, contextB]);
       for (const r of resolved) {
         assert.equal(r.attester.toLowerCase(), attester.toLowerCase());
-        assert.equal(r.descriptorHash, record.descriptorDetails.descriptorHash);
-        assert.deepEqual(r.descriptorSchemaMajors, [1n, 2n]);
+        assert.deepEqual(r.releases, record.descriptorDetails.releases);
         assert.deepEqual(r.descriptorUrls, descriptorUris);
         assert.deepEqual(r.attestationUrls, attestationUris);
       }
+    });
+
+    it("keeps a distinct descriptor hash per schema major", async function () {
+      const { registry, attester } = await deploy();
+      await registry.write.writeRecords([[[contextA]], [recordOf("multi", [1n, 3n])]]);
+
+      const [resolved] = await registry.read.resolveRecords([[attester], [contextA]]);
+      assert.deepEqual(resolved.releases.map((r) => r.schemaMajor), [1n, 3n]);
+      assert.deepEqual(resolved.releases.map((r) => r.descriptorHash), [hashOf("multi-1"), hashOf("multi-3")]);
     });
 
     it("replaces the previous record at a context", async function () {
@@ -77,8 +88,7 @@ describe("ClearSigningRegistry", async function () {
       await registry.write.writeRecords([[[contextA]], [recordOf("new", [4n])]]);
 
       const [resolved] = await registry.read.resolveRecords([[attester], [contextA]]);
-      assert.equal(resolved.descriptorHash, hashOf("new"));
-      assert.deepEqual(resolved.descriptorSchemaMajors, [4n]);
+      assert.deepEqual(resolved.releases, recordOf("new", [4n]).descriptorDetails.releases);
     });
 
     it("keeps records per attester", async function () {
@@ -87,10 +97,13 @@ describe("ClearSigningRegistry", async function () {
       await registry.write.writeRecords([[[contextA]], [recordOf("by-other")]], { account: other.account });
 
       const onlyAttester = await registry.read.resolveRecords([[attester], [contextA]]);
-      assert.deepEqual(onlyAttester.map((r) => r.descriptorHash), [hashOf("by-attester")]);
+      assert.deepEqual(onlyAttester.map((r) => r.releases), [recordOf("by-attester").descriptorDetails.releases]);
 
       const both = await registry.read.resolveRecords([[attester, otherAddress], [contextA]]);
-      assert.deepEqual(both.map((r) => r.descriptorHash), [hashOf("by-attester"), hashOf("by-other")]);
+      assert.deepEqual(both.map((r) => r.releases), [
+        recordOf("by-attester").descriptorDetails.releases,
+        recordOf("by-other").descriptorDetails.releases,
+      ]);
     });
 
     it("rejects invalid input", async function () {
@@ -102,11 +115,15 @@ describe("ClearSigningRegistry", async function () {
       await viem.assertions.revertWithCustomError(write([[contextA], [contextB]], [recordOf("a")]), registry, "ArrayLengthMismatch");
       await viem.assertions.revertWithCustomError(write([[]], [recordOf("a")]), registry, "EmptyContextKeyIds");
 
-      const zeroHash = recordOf("a");
-      zeroHash.descriptorDetails.descriptorHash = `0x${"00".repeat(32)}`;
+      await viem.assertions.revertWithCustomError(write([[contextA]], [recordOf("a", [])]), registry, "EmptyReleases");
+
+      const zeroHash = recordOf("a", [1n, 2n]);
+      zeroHash.descriptorDetails.releases[1].descriptorHash = `0x${"00".repeat(32)}`;
       await viem.assertions.revertWithCustomError(write([[contextA]], [zeroHash]), registry, "ZeroDescriptorHash");
 
-      await viem.assertions.revertWithCustomError(write([[contextA]], [recordOf("a", [])]), registry, "EmptyDescriptorSchemaMajors");
+      for (const majors of [[0n], [1n, 1n], [2n, 1n]]) {
+        await viem.assertions.revertWithCustomError(write([[contextA]], [recordOf("a", majors)]), registry, "SchemaMajorsNotAscending");
+      }
 
       const unpublished = hashOf("unpublished");
       const unpublishedDescriptor = recordOf("a");
