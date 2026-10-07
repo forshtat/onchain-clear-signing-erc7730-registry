@@ -68,7 +68,9 @@ contract RecordsModule is MirrorListManager, IRecordsModule {
         _requireMirrorListPublished(registrationRecord.attestationDetails.mirrorListId);
 
         bytes32 recordId = keccak256(abi.encode(registrationRecord));
-        _recordsById[recordId] = registrationRecord;
+        if (_recordsById[recordId].descriptorDetails.releases.length == 0) {
+            _recordsById[recordId] = registrationRecord;
+        }
 
         for (uint256 i = 0; i < contextKeyIds.length; i++) {
             _recordIds[msg.sender][contextKeyIds[i]] = recordId;
